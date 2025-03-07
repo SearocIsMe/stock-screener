@@ -4,6 +4,7 @@ Stock filtering module for filtering stocks based on technical indicators
 import os
 import json
 import logging
+from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
 import yaml
 import pandas as pd
@@ -14,7 +15,7 @@ from src.data.acquisition import DataAcquisition
 from src.indicators.technical import TechnicalIndicators
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Load configuration
@@ -45,17 +46,28 @@ class StockFilter:
         # Set default values
         if not symbols:
             symbols = "all"
+            
+        # Convert to uppercase if it's a string
+        if isinstance(symbols, str):
+            symbols = symbols.upper()
         
         if not time_frames:
             time_frames = ["daily", "weekly", "monthly"]
         
-        # Get symbols if "all" is specified
-        if symbols == "all" or symbols == "ALL":
+        # Handle the case when symbols is a list containing "all"
+        if isinstance(symbols, list) and len(symbols) == 1 and symbols[0].lower() == "all":
             symbols_json = self.redis.get("symbols_all")
-            if not symbols_json:
-                symbols = self.data_acquisition.fetch_stock_symbols()
-            else:
+            if symbols_json:
                 symbols = json.loads(symbols_json)
+            else:
+                symbols = self.data_acquisition.fetch_stock_symbols()
+        # Handle the case when symbols is the string "all"
+        elif symbols == "all" or symbols == "ALL":
+            symbols_json = self.redis.get("symbols_all")
+            if symbols_json:
+                symbols = json.loads(symbols_json)
+            else:
+                symbols = self.data_acquisition.fetch_stock_symbols()
         elif isinstance(symbols, str) and symbols.lower() in ["sp500", "nasdaq", "nyse"]:
             # Get symbols for specific exchange
             exchange = symbols.lower()

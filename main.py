@@ -4,16 +4,14 @@ Stock Screener Application Entry Point
 """
 import os
 import logging
+from src.utils.logging_config import configure_logging
 import uvicorn
 import yaml
 from fastapi import FastAPI
 from src.api.routes import router as api_router
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging with file path, line number, and function name
+configure_logging()
 logger = logging.getLogger(__name__)
 
 def load_config():

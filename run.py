@@ -4,17 +4,15 @@ Script to initialize the database and run the API server
 """
 import os
 import logging
+from src.utils.logging_config import configure_logging
 import uvicorn
 import yaml
 from fastapi import FastAPI
 from src.api.routes import router as api_router
 from src.data.init_db import init_db
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging with file path, line number, and function name
+configure_logging()
 logger = logging.getLogger(__name__)
 
 def load_config():

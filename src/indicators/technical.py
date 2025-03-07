@@ -3,12 +3,13 @@ Technical indicators module for calculating EMA, BIAS, RSI, and MACD
 """
 import os
 import logging
+from src.utils.logging_config import configure_logging
 import yaml
 import numpy as np
 import pandas as pd
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Load configuration

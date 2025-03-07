@@ -3,6 +3,7 @@ Database initialization script
 """
 import os
 import logging
+from src.utils.logging_config import configure_logging
 import yaml
 from sqlalchemy import create_engine
 from sqlalchemy_utils import database_exists, create_database
@@ -10,7 +11,7 @@ from .models import Base
 from .database import get_db
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 def init_db():

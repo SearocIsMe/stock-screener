@@ -2,6 +2,7 @@
 API routes for the stock screener application
 """
 import logging
+from src.utils.logging_config import configure_logging
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -11,7 +12,7 @@ from src.data.acquisition import DataAcquisition
 from src.filters.stock_filter import StockFilter
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Create router
