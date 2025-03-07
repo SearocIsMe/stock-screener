@@ -1,0 +1,83 @@
+# Database Configuration
+database:
+  postgres:
+    host: localhost
+    port: 5432
+    username: postgres
+    password: postgres
+    database: stock_screener
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    db: 0
+    expiration_days: 30  # Expiration time for filtered stocks in days
+
+# API Configuration
+api:
+  host: 0.0.0.0
+  port: 8000
+  debug: true
+
+# Data Fetching Configuration
+data_fetching:
+  yfinance:
+    batch_size: 100  # Number of stocks to fetch in a single batch
+    retry_attempts: 3
+    retry_delay: 5  # Seconds
+  scrapy:
+    concurrent_requests: 16
+    download_delay: 0.5  # Seconds
+
+# Technical Indicators Configuration
+indicators:
+  ema:
+    daily:
+      periods: [13]  # EMA periods for daily timeframe
+    weekly:
+      periods: [60]  # EMA periods for weekly timeframe
+    monthly:
+      periods: [120]  # EMA periods for monthly timeframe
+  
+  bias:
+    # BIAS calculation: (Close - EMA) / EMA * 100
+    daily:
+      threshold: -8  # Filter stocks with BIAS below this threshold
+    weekly:
+      threshold: -12
+    monthly:
+      threshold: -7
+  
+  rsi:
+    daily:
+      period: 14
+      oversold: 30  # RSI below this is considered oversold
+      overbought: 70  # RSI above this is considered overbought
+    weekly:
+      period: 14
+      oversold: 30
+      overbought: 70
+    monthly:
+      period: 14
+      oversold: 30
+      overbought: 70
+  
+  macd:
+    daily:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    weekly:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    monthly:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+
+# Stock Exchanges
+exchanges:
+  - SP500
+  - NASDAQ
+  - NYSE
