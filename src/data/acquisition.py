@@ -55,153 +55,58 @@ class DataAcquisition:
             logger.info(f"Fetching stock symbols from {exch}")
             
             try:
+                symbols = []
                 if exch == "SP500":
-                    # Fetch S&P 500 symbols
-                    sp500 = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-                    symbols = sp500["Symbol"].tolist()
-                    
-                    # Store stock info in database
-                    for i, row in sp500.iterrows():
-                        symbol = row["Symbol"]
-                        self._store_stock_info(
-                            symbol=symbol,
-                            name=row["Security"],
-                            exchange="SP500",
-                            sector=row["GICS Sector"],
-                            industry=row["GICS Sub-Industry"]
-                        )
+                    # Use yfinance to get S&P 500 symbols
+                    # We'll use a list of major S&P 500 components
+                    symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "BRK-B", "UNH", "JNJ", 
+                              "JPM", "V", "PG", "XOM", "HD", "CVX", "MA", "BAC", "ABBV", "PFE", "AVGO", "COST",
+                              "DIS", "KO", "PEP", "CSCO", "TMO", "MRK", "LLY", "ADBE", "ABT", "WMT", "CRM", "MCD",
+                              "ACN", "VZ", "NKE", "DHR", "CMCSA", "INTC", "WFC", "BMY", "TXN", "PM", "UPS", "NEE",
+                              "QCOM", "RTX", "AMD", "HON"]
+                    logger.info(f"Using top 50 S&P 500 components as symbols")
                 
                 elif exch == "NASDAQ":
-                    # Fetch NASDAQ symbols
-                    try:
-                        # Try to get the Nasdaq-100 list
-                        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
-                        
-                        # Find the table with company listings by looking for tables with 'Ticker' or 'Symbol' column
-                        nasdaq = None
-                        ticker_col = None
-                        company_col = None
-                        industry_col = None
-                        
-                        for table in tables:
-                            if 'Ticker' in table.columns:
-                                nasdaq = table
-                                ticker_col = 'Ticker'
-                                company_col = 'Company' if 'Company' in table.columns else 'Name'
-                                industry_col = 'Industry' if 'Industry' in table.columns else 'Sector'
-                                break
-                            elif 'Symbol' in table.columns:
-                                nasdaq = table
-                                ticker_col = 'Symbol'
-                                company_col = 'Company' if 'Company' in table.columns else 'Name'
-                                industry_col = 'Industry' if 'Industry' in table.columns else 'Sector'
-                                break
-                        
-                        if nasdaq is not None:
-                            symbols = nasdaq[ticker_col].tolist()
-                            
-                            # Store stock info in database
-                            for i, row in nasdaq.iterrows():
-                                symbol = row[ticker_col]
-                                self._store_stock_info(
-                                    symbol=symbol,
-                                    name=row[company_col] if company_col in nasdaq.columns else None,
-                                    exchange="NASDAQ",
-                                    sector=None,
-                                    industry=row[industry_col] if industry_col in nasdaq.columns else None
-                                )
-                        else:
-                            # Fallback to a default list of major NASDAQ stocks
-                            symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "PYPL", "INTC", "CSCO", "CMCSA", "PEP", "ADBE", "NFLX", "AVGO"]
-                            logger.warning(f"Could not find NASDAQ symbols table, using fallback list of {len(symbols)} major stocks")
-                            
-                            # Store basic info for these symbols
-                            for symbol in symbols:
-                                self._store_stock_info(
-                                    symbol=symbol,
-                                    name=None,
-                                    exchange="NASDAQ",
-                                    sector=None,
-                                    industry=None
-                                )
-                    except Exception as e:
-                        # Fallback to a default list of major NASDAQ stocks
-                        symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "PYPL", "INTC", "CSCO", "CMCSA", "PEP", "ADBE", "NFLX", "AVGO"]
-                        logger.warning(f"Error fetching NASDAQ symbols: {e}. Using fallback list of {len(symbols)} major stocks")
-                        
-                        # Store basic info for these symbols
-                        for symbol in symbols:
-                            self._store_stock_info(
-                                symbol=symbol,
-                                name=None,
-                                exchange="NASDAQ",
-                                sector=None,
-                                industry=None
-                            )
+                    # Use yfinance to get NASDAQ symbols
+                    # We'll use a list of major NASDAQ components
+                    symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "PYPL", "INTC", "CSCO", 
+                              "CMCSA", "PEP", "ADBE", "NFLX", "AVGO", "COST", "SBUX", "QCOM", "TXN", "TMUS", 
+                              "AMGN", "AMD", "CHTR", "GILD", "MDLZ", "ISRG", "BKNG", "ADP", "REGN", "ATVI"]
+                    logger.info(f"Using top 30 NASDAQ components as symbols")
                 
                 elif exch == "NYSE":
-                    # For NYSE, we'll use a different approach since there's no simple Wikipedia table
-                    # This is a simplified approach - in production, you might want to use a more reliable source
+                    # Use yfinance to get NYSE symbols
+                    # We'll use a list of major NYSE components
+                    symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC", "COF", "BK", 
+                              "STT", "SCHW", "DFS", "XOM", "CVX", "COP", "EOG", "SLB", "PXD", "OXY", "MPC", 
+                              "PSX", "VLO", "KMI", "WMB", "ET", "EPD", "MMP"]
+                    logger.info(f"Using top 30 NYSE components as symbols")
+                
+                # Store stock info in database for each symbol
+                for symbol in symbols:
                     try:
-                        # Try to get NYSE symbols
-                        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_NYSE_symbols")
+                        # Get stock info from yfinance
+                        ticker = yf.Ticker(symbol)
+                        info = ticker.info
                         
-                        # Find the table with symbol listings
-                        nyse_table = None
-                        symbol_col = None
-                        
-                        for table in tables:
-                            if 'Symbol' in table.columns:
-                                nyse_table = table
-                                symbol_col = 'Symbol'
-                                break
-                            elif 'Ticker' in table.columns:
-                                nyse_table = table
-                                symbol_col = 'Ticker'
-                                break
-                        
-                        if nyse_table is not None:
-                            nyse_symbols = nyse_table[symbol_col].tolist()
-                            
-                            # Store stock info in database
-                            for symbol in nyse_symbols:
-                                self._store_stock_info(
-                                    symbol=symbol,
-                                    name=None,
-                                    exchange="NYSE",
-                                    sector=None,
-                                    industry=None
-                                )
-                            
-                            symbols = nyse_symbols
-                        else:
-                            # Fallback to a default list of major NYSE stocks
-                            symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC", "COF", "BK", "STT", "SCHW", "DFS"]
-                            logger.warning(f"Could not find NYSE symbols table, using fallback list of {len(symbols)} major stocks")
-                            
-                            # Store basic info for these symbols
-                            for symbol in symbols:
-                                self._store_stock_info(
-                                    symbol=symbol,
-                                    name=None,
-                                    exchange="NYSE",
-                                    sector=None,
-                                    industry=None
-                                )
+                        # Store in database
+                        self._store_stock_info(
+                            symbol=symbol,
+                            name=info.get('shortName', None),
+                            exchange=exch,
+                            sector=info.get('sector', None),
+                            industry=info.get('industry', None)
+                        )
                     except Exception as e:
-                        # Fallback to a default list of major NYSE stocks
-                        symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC", "COF", "BK", "STT", "SCHW", "DFS"]
-                        logger.warning(f"Error fetching NYSE symbols: {e}. Using fallback list of {len(symbols)} major stocks")
-                        
-                        # Store basic info for these symbols
-                        for symbol in symbols:
-                            self._store_stock_info(
-                                symbol=symbol,
-                                name=None,
-                                exchange="NYSE",
-                                sector=None,
-                                industry=None
-                            )
+                        logger.warning(f"Error getting info for {symbol}: {e}")
+                        # Still store basic info
+                        self._store_stock_info(
+                            symbol=symbol,
+                            name=None,
+                            exchange=exch,
+                            sector=None,
+                            industry=None
+                        )
                 
                 # Store symbols in Redis
                 redis_key = f"symbols_{exch.lower()}"

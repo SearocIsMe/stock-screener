@@ -6,6 +6,7 @@ import json
 import logging
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
+import yfinance as yf
 import yaml
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -124,107 +125,69 @@ class StockFilter:
         return filtered_results
     
     def _get_historical_data(self, symbol, time_frame, days=100):
-        """Get historical data for a symbol"""
+        """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
         end_date = datetime.now()
+        
+        # Set interval and start date based on time frame
         if time_frame == "daily":
             start_date = end_date - timedelta(days=days)
+            interval = "1d"
         elif time_frame == "weekly":
             start_date = end_date - timedelta(days=days * 7)
+            interval = "1wk"
         elif time_frame == "monthly":
             start_date = end_date - timedelta(days=days * 30)
-        
-        # Query database for historical data
-        stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
-        
-        if not stock:
-            logger.warning(f"Stock {symbol} not found in database")
+            interval = "1mo"
+        else:
+            logger.error(f"Invalid time frame: {time_frame}")
             return pd.DataFrame()
         
-        prices = self.db.query(StockPrice).filter(
-            StockPrice.stock_id == stock.id,
-            StockPrice.time_frame == time_frame,
-            StockPrice.date >= start_date,
-            StockPrice.date <= end_date
-        ).order_by(StockPrice.date).all()
-        
-        if not prices:
-            logger.warning(f"No historical prices for {symbol} ({time_frame})")
-            # Fetch data if not available
-            self.data_acquisition.fetch_stock_history([symbol], start_date, end_date, time_frame)
+        try:
+            # Fetch data directly from yfinance
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(
+                start=start_date,
+                end=end_date,
+                interval=interval
+            )
             
-            # Try querying again
-            prices = self.db.query(StockPrice).filter(
-                StockPrice.stock_id == stock.id,
-                StockPrice.time_frame == time_frame,
-                StockPrice.date >= start_date,
-                StockPrice.date <= end_date
-            ).order_by(StockPrice.date).all()
+            if data.empty:
+                logger.warning(f"No historical data for {symbol} ({time_frame})")
             
-            if not prices:
-                return pd.DataFrame()
-        
-        # Convert to DataFrame
-        data = pd.DataFrame([
-            {
-                'Date': price.date,
-                'Open': price.open,
-                'High': price.high,
-                'Low': price.low,
-                'Close': price.close,
-                'Volume': price.volume
-            }
-            for price in prices
-        ])
-        
-        # Set index
-        data.set_index('Date', inplace=True)
-        
-        return data
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching historical data for {symbol}: {e}")
+            return pd.DataFrame()
     
     def _get_next_day_data(self, symbol, last_date, time_frame):
-        """Get next day data for a symbol"""
+        """Get next day data for a symbol directly from yfinance"""
         # Calculate next date
         if time_frame == "daily":
             next_date = last_date + timedelta(days=1)
+            interval = "1d"
         elif time_frame == "weekly":
             next_date = last_date + timedelta(days=7)
+            interval = "1wk"
         elif time_frame == "monthly":
             next_date = last_date + timedelta(days=30)
-        
-        # Query database for next day data
-        stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
-        
-        if not stock:
-            logger.warning(f"Stock {symbol} not found in database")
+            interval = "1mo"
+        else:
+            logger.error(f"Invalid time frame: {time_frame}")
             return pd.DataFrame()
         
-        price = self.db.query(StockPrice).filter(
-            StockPrice.stock_id == stock.id,
-            StockPrice.time_frame == time_frame,
-            StockPrice.date > last_date
-        ).order_by(StockPrice.date).first()
-        
-        if not price:
-            logger.warning(f"No next day price for {symbol} ({time_frame})")
+        try:
+            # Fetch data directly from yfinance
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(
+                start=last_date + timedelta(days=1),
+                end=next_date + timedelta(days=1),  # Add an extra day to ensure we get at least one data point
+                interval=interval
+            )
+            return data.head(1)  # Return only the first row
+        except Exception as e:
+            logger.error(f"Error fetching next day data for {symbol}: {e}")
             return pd.DataFrame()
-        
-        # Convert to DataFrame
-        data = pd.DataFrame([
-            {
-                'Date': price.date,
-                'Open': price.open,
-                'High': price.high,
-                'Low': price.low,
-                'Close': price.close,
-                'Volume': price.volume
-            }
-        ])
-        
-        # Set index
-        data.set_index('Date', inplace=True)
-        
-        return data
     
     def _meets_criteria(self, indicators, time_frame):
         """Check if indicators meet filtering criteria"""
