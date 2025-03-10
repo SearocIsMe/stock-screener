@@ -3,8 +3,8 @@ database:
   postgres:
     host: localhost
     port: 5432
-    username: postgres
-    password: postgres
+    username: stock_user
+    password: 7788
     database: stock_screener
   redis:
     host: localhost

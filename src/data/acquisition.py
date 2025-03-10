@@ -8,8 +8,12 @@ import time
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
 import yaml
+import requests
+
 import yfinance as yf
 import pandas as pd
+import pandas_datareader as pdr
+import pandas_datareader.data as web
 from sqlalchemy.orm import Session
 from .database import get_redis
 from .models import Stock, StockPrice, TimeFrame
@@ -42,7 +46,7 @@ class DataAcquisition:
         Fetch stock symbols from specified exchange and store in Redis
         
         Args:
-            exchange: Exchange to fetch symbols from (SP500, NASDAQ, NYSE)
+            exchange: Exchange to fetch symbols from (SP500, NASDAQ, NYSE, AMEX)
                      If None, fetch from all exchanges
         
         Returns:
@@ -51,68 +55,72 @@ class DataAcquisition:
         exchanges = [exchange] if exchange else config["exchanges"]
         all_symbols = []
         
+        # First, fetch all symbols from all exchanges
         for exch in exchanges:
             logger.info(f"Fetching stock symbols from {exch}")
             
             try:
                 symbols = []
+                
                 if exch == "SP500":
-                    # Use yfinance to get S&P 500 symbols
-                    # We'll use a list of major S&P 500 components
-                    symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "BRK-B", "UNH", "JNJ", 
-                              "JPM", "V", "PG", "XOM", "HD", "CVX", "MA", "BAC", "ABBV", "PFE", "AVGO", "COST",
-                              "DIS", "KO", "PEP", "CSCO", "TMO", "MRK", "LLY", "ADBE", "ABT", "WMT", "CRM", "MCD",
-                              "ACN", "VZ", "NKE", "DHR", "CMCSA", "INTC", "WFC", "BMY", "TXN", "PM", "UPS", "NEE",
-                              "QCOM", "RTX", "AMD", "HON"]
-                    logger.info(f"Using top 50 S&P 500 components as symbols")
-                
-                elif exch == "NASDAQ":
-                    # Use yfinance to get NASDAQ symbols
-                    # We'll use a list of major NASDAQ components
-                    symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "PYPL", "INTC", "CSCO", 
-                              "CMCSA", "PEP", "ADBE", "NFLX", "AVGO", "COST", "SBUX", "QCOM", "TXN", "TMUS", 
-                              "AMGN", "AMD", "CHTR", "GILD", "MDLZ", "ISRG", "BKNG", "ADP", "REGN", "ATVI"]
-                    logger.info(f"Using top 30 NASDAQ components as symbols")
-                
-                elif exch == "NYSE":
-                    # Use yfinance to get NYSE symbols
-                    # We'll use a list of major NYSE components
-                    symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC", "COF", "BK", 
-                              "STT", "SCHW", "DFS", "XOM", "CVX", "COP", "EOG", "SLB", "PXD", "OXY", "MPC", 
-                              "PSX", "VLO", "KMI", "WMB", "ET", "EPD", "MMP"]
-                    logger.info(f"Using top 30 NYSE components as symbols")
-                
-                # Store stock info in database for each symbol
-                for symbol in symbols:
+                    # Fetch S&P 500 symbols from Wikipedia using pandas
                     try:
-                        # Get stock info from yfinance
-                        ticker = yf.Ticker(symbol)
-                        info = ticker.info
-                        
-                        # Store in database
-                        self._store_stock_info(
-                            symbol=symbol,
-                            name=info.get('shortName', None),
-                            exchange=exch,
-                            sector=info.get('sector', None),
-                            industry=info.get('industry', None)
-                        )
+                        logger.info("Fetching S&P 500 symbols from Wikipedia")
+                        sp500_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+                        symbols = sp500_df['Symbol'].str.replace('.', '-', regex=False).tolist()
+                        logger.info(f"Retrieved {len(symbols)} S&P 500 symbols")
                     except Exception as e:
-                        logger.warning(f"Error getting info for {symbol}: {e}")
-                        # Still store basic info
-                        self._store_stock_info(
-                            symbol=symbol,
-                            name=None,
-                            exchange=exch,
-                            sector=None,
-                            industry=None
+                        logger.error(f"Error fetching S&P 500 symbols: {e}")
+                        # Fallback to top components if fetching fails
+                        symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "BRK-B", "UNH", "JNJ"]
+                        logger.warning(f"Using fallback list of {len(symbols)} S&P 500 components")
+                
+                elif exch in ["NASDAQ", "NYSE", "AMEX"]:
+                    # Read symbols from CSV files in config directory
+                    try:
+                        # Construct the CSV file path
+                        csv_path = os.path.join(
+                            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                            "config", 
+                            f"{exch}.csv"
                         )
+                        logger.info(f"Reading {exch} symbols from {csv_path}")
+                        
+                        # Check if file exists
+                        if os.path.exists(csv_path):
+                            # Read the CSV file
+                            df = pd.read_csv(csv_path)
+                            
+                            # Extract symbols column
+                            if 'Symbol' in df.columns:
+                                symbols = df['Symbol'].tolist()
+                            elif 'symbol' in df.columns:
+                                symbols = df['symbol'].tolist()
+                            else:
+                                # Try to use the first column
+                                symbols = df.iloc[:, 0].tolist()
+                                
+                            logger.info(f"Retrieved {len(symbols)} {exch} symbols from CSV file")
+                        else:
+                            logger.error(f"CSV file for {exch} not found at {csv_path}")
+                            raise FileNotFoundError(f"CSV file for {exch} not found at {csv_path}")
+                    except Exception as e:
+                        logger.error(f"Error reading {exch} symbols from CSV: {e}")
+                        # Fallback to top components
+                        if exch == "NASDAQ":
+                            symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "PYPL", "INTC", "CSCO"]
+                        elif exch == "NYSE":
+                            symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC"]
+                        elif exch == "AMEX":
+                            symbols = ["SPY", "GLD", "XLF", "EEM", "XLE", "VXX", "EFA", "XLV", "IWM", "QQQ"]
+                        logger.warning(f"Using fallback list of {len(symbols)} {exch} components")
                 
                 # Store symbols in Redis
                 redis_key = f"symbols_{exch.lower()}"
                 self.redis.set(redis_key, json.dumps(symbols))
                 logger.info(f"Stored {len(symbols)} symbols for {exch} in Redis")
                 
+                # Add to all symbols list
                 all_symbols.extend(symbols)
             
             except Exception as e:
@@ -123,7 +131,47 @@ class DataAcquisition:
             self.redis.set("symbols_all", json.dumps(all_symbols))
             logger.info(f"Stored {len(all_symbols)} symbols in Redis")
         
+        # Now process all symbols to get ticker information
+        self.process_stock_symbols(all_symbols)
+        
         return all_symbols
+    
+    def process_stock_symbols(self, symbols, exchange=None):
+        """Process stock symbols to get ticker information and store in database"""
+        logger.info(f"Processing {len(symbols)} symbols for ticker information")
+        
+        # Process in batches to avoid rate limiting
+        for i in range(0, len(symbols), BATCH_SIZE):
+            batch = symbols[i:i+BATCH_SIZE]
+            logger.info(f"Processing batch {i//BATCH_SIZE + 1}/{(len(symbols)-1)//BATCH_SIZE + 1} ({len(batch)} symbols)")
+            
+            for symbol in batch:
+                try:
+                    # Get stock info from yfinance
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    
+                    # Store in database
+                    self._store_stock_info(
+                        symbol=symbol,
+                        name=info.get('shortName', None),
+                        exchange=exchange,
+                        sector=info.get('sector', None),
+                        industry=info.get('industry', None)
+                    )
+                except Exception as e:
+                    logger.warning(f"Error getting info for {symbol}: {e}")
+                    # Still store basic info
+                    self._store_stock_info(
+                        symbol=symbol,
+                        name=None,
+                        exchange=exchange,
+                        sector=None,
+                        industry=None
+                    )
+            
+            # Sleep to avoid rate limiting
+            time.sleep(1)
     
     def _store_stock_info(self, symbol, name=None, exchange=None, sector=None, industry=None):
         """Store stock information in database"""
@@ -204,7 +252,7 @@ class DataAcquisition:
                 symbols = self.fetch_stock_symbols()
             else:
                 symbols = json.loads(symbols_json)
-        elif isinstance(symbols, str) and symbols.lower() in ["sp500", "nasdaq", "nyse"]:
+        elif isinstance(symbols, str) and symbols.lower() in ["sp500", "nasdaq", "nyse", "amex"]:
             # Get symbols for specific exchange
             exchange = symbols.lower()
             symbols_json = self.redis.get(f"symbols_{exchange}")

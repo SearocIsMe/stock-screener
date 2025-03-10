@@ -12,7 +12,7 @@ def configure_logging():
     """
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - [%(pathname)s:%(lineno)d:%(funcName)s] - %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d:%(funcName)s] - %(message)s",
     )
     
     # Return the root logger in case it's needed

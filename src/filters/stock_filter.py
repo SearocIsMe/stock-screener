@@ -47,40 +47,50 @@ class StockFilter:
         # Set default values
         if not symbols:
             symbols = "all"
-            
-        # Convert to uppercase if it's a string
-        if isinstance(symbols, str):
-            symbols = symbols.upper()
         
         if not time_frames:
             time_frames = ["daily", "weekly", "monthly"]
         
-        # Handle the case when symbols is a list containing "all"
-        if isinstance(symbols, list) and len(symbols) == 1 and symbols[0].lower() == "all":
-            symbols_json = self.redis.get("symbols_all")
-            if symbols_json:
-                symbols = json.loads(symbols_json)
-            else:
-                symbols = self.data_acquisition.fetch_stock_symbols()
-        # Handle the case when symbols is the string "all"
-        elif symbols == "all" or symbols == "ALL":
-            symbols_json = self.redis.get("symbols_all")
-            if symbols_json:
-                symbols = json.loads(symbols_json)
-            else:
-                symbols = self.data_acquisition.fetch_stock_symbols()
-        elif isinstance(symbols, str) and symbols.lower() in ["sp500", "nasdaq", "nyse"]:
-            # Get symbols for specific exchange
-            exchange = symbols.lower()
-            symbols_json = self.redis.get(f"symbols_{exchange}")
-            if not symbols_json:
-                symbols = self.data_acquisition.fetch_stock_symbols(exchange.upper())
-            else:
-                symbols = json.loads(symbols_json)
+        # Convert single string to list for consistent processing
+        if isinstance(symbols, str):
+            symbols = [symbols]
         
-        # Process each symbol
-        filtered_results = {}
+        # Process symbols to get actual stock symbols
+        all_stock_symbols = []
+        
+        # Iterate through each element in the symbols list
         for symbol in symbols:
+            symbol_upper = symbol.upper()
+            
+            # Case 1: Symbol is "ALL" - get all symbols
+            if symbol_upper == "ALL":
+                symbols_json = self.redis.get("symbols_all")
+                if symbols_json:
+                    all_stock_symbols.extend(json.loads(symbols_json))
+                else:
+                    all_stock_symbols.extend(self.data_acquisition.fetch_stock_symbols())
+            
+            # Case 2: Symbol is an exchange name (SP500, NASDAQ, NYSE, AMEX)
+            elif symbol_upper in ["SP500", "NASDAQ", "NYSE", "AMEX"]:
+                exchange_lower = symbol_upper.lower()
+                symbols_json = self.redis.get(f"symbols_{exchange_lower}")
+                if symbols_json:
+                    all_stock_symbols.extend(json.loads(symbols_json))
+                else:
+                    all_stock_symbols.extend(self.data_acquisition.fetch_stock_symbols(symbol_upper))
+            
+            # Case 3: Symbol is an actual stock symbol
+            else:
+                all_stock_symbols.append(symbol)
+        
+        # Remove duplicates while preserving order
+        all_stock_symbols = list(dict.fromkeys(all_stock_symbols))
+        
+        logger.info(f"Processing {len(all_stock_symbols)} stock symbols for filtering")
+        
+        # Process each stock symbol
+        filtered_results = {}
+        for symbol in all_stock_symbols:
             try:
                 # Filter stock for each time frame
                 symbol_results = {}
@@ -192,33 +202,68 @@ class StockFilter:
     def _meets_criteria(self, indicators, time_frame):
         """Check if indicators meet filtering criteria"""
         if indicators.empty:
+            logger.warning("Empty indicators DataFrame, cannot apply filtering criteria")
             return False
         
-        # Get configuration for the specified time frame
-        tf_config = {
-            'bias': config['indicators']['bias'][time_frame],
-            'rsi': config['indicators']['rsi'][time_frame],
-            'macd': config['indicators']['macd'][time_frame]
-        }
-        
-        # Check BIAS criteria
-        bias_threshold = tf_config['bias']['threshold']
-        bias_value = indicators['BIAS_13_Close'].iloc[-1]
-        
-        if not pd.isna(bias_value) and bias_value < bias_threshold:
-            # Check RSI criteria
-            rsi_oversold = tf_config['rsi']['oversold']
-            rsi_value = indicators[f"RSI_{tf_config['rsi']['period']}"].iloc[-1]
+        try:
+            # Get configuration for the specified time frame
+            ema_config = config['indicators']['ema'][time_frame]
+            bias_config = config['indicators']['bias'][time_frame]
+            rsi_config = config['indicators']['rsi'][time_frame]
+            macd_config = config['indicators']['macd'][time_frame]
             
-            if not pd.isna(rsi_value) and rsi_value < rsi_oversold:
+            # Find BIAS column - use the first EMA period from config
+            if 'periods' in ema_config and len(ema_config['periods']) > 0:
+                ema_period = ema_config['periods'][0]
+                bias_column = f"BIAS_{ema_period}_Close"
+                
+                # Check if the BIAS column exists in the indicators DataFrame
+                if bias_column not in indicators.columns:
+                    logger.warning(f"BIAS column '{bias_column}' not found in indicators")
+                    return False
+                
+                # Get BIAS value and threshold
+                bias_value = indicators[bias_column].iloc[-1]
+                bias_threshold = bias_config['threshold']
+                
+                # Check BIAS criteria
+                if pd.isna(bias_value) or bias_value >= bias_threshold:
+                    return False
+                
+                # Check RSI criteria
+                rsi_period = rsi_config['period']
+                rsi_column = f"RSI_{rsi_period}"
+                
+                if rsi_column not in indicators.columns:
+                    logger.warning(f"RSI column '{rsi_column}' not found in indicators")
+                    return False
+                
+                rsi_value = indicators[rsi_column].iloc[-1]
+                rsi_oversold = rsi_config['oversold']
+                
+                if pd.isna(rsi_value) or rsi_value >= rsi_oversold:
+                    return False
+                
                 # Check MACD criteria
+                if 'MACD' not in indicators.columns or 'MACD_Signal' not in indicators.columns:
+                    logger.warning("MACD or MACD_Signal column not found in indicators")
+                    return False
+                
                 macd_value = indicators['MACD'].iloc[-1]
                 macd_signal = indicators['MACD_Signal'].iloc[-1]
                 
-                if not pd.isna(macd_value) and not pd.isna(macd_signal) and macd_value < macd_signal:
-                    return True
+                if pd.isna(macd_value) or pd.isna(macd_signal) or macd_value >= macd_signal:
+                    return False
+                
+                # All criteria met
+                return True
+            else:
+                logger.warning(f"No EMA periods defined for {time_frame} timeframe")
+                return False
         
-        return False
+        except Exception as e:
+            logger.error(f"Error in _meets_criteria: {e}")
+            return False
     
     def _store_filtered_result(self, symbol, indicators, time_frame):
         """Store filtered result in database and Redis"""
@@ -233,6 +278,19 @@ class StockFilter:
             # Create filtered stock record
             filter_date = indicators.index[-1]
             
+            # Get configuration for the specified time frame
+            ema_config = config['indicators']['ema'][time_frame]
+            rsi_config = config['indicators']['rsi'][time_frame]
+            
+            # Find BIAS column - use the first EMA period from config
+            bias_column = None
+            if 'periods' in ema_config and len(ema_config['periods']) > 0:
+                ema_period = ema_config['periods'][0]
+                bias_column = f"BIAS_{ema_period}_Close"
+            
+            # Find RSI column
+            rsi_column = f"RSI_{rsi_config['period']}"
+            
             # Check if record already exists
             existing_filter = self.db.query(FilteredStock).filter(
                 FilteredStock.stock_id == stock.id,
@@ -240,13 +298,20 @@ class StockFilter:
                 FilteredStock.time_frame == time_frame
             ).first()
             
+            # Get values from indicators (with safety checks)
+            bias_value = indicators[bias_column].iloc[-1] if bias_column and bias_column in indicators.columns else None
+            rsi_value = indicators[rsi_column].iloc[-1] if rsi_column in indicators.columns else None
+            macd_value = indicators['MACD'].iloc[-1] if 'MACD' in indicators.columns else None
+            macd_signal = indicators['MACD_Signal'].iloc[-1] if 'MACD_Signal' in indicators.columns else None
+            macd_histogram = indicators['MACD_Histogram'].iloc[-1] if 'MACD_Histogram' in indicators.columns else None
+            
             if existing_filter:
                 # Update existing record
-                existing_filter.bias_value = indicators['BIAS_13_Close'].iloc[-1]
-                existing_filter.rsi_value = indicators[f"RSI_{config['indicators']['rsi'][time_frame]['period']}"].iloc[-1]
-                existing_filter.macd_value = indicators['MACD'].iloc[-1]
-                existing_filter.macd_signal = indicators['MACD_Signal'].iloc[-1]
-                existing_filter.macd_histogram = indicators['MACD_Histogram'].iloc[-1]
+                existing_filter.bias_value = bias_value
+                existing_filter.rsi_value = rsi_value
+                existing_filter.macd_value = macd_value
+                existing_filter.macd_signal = macd_signal
+                existing_filter.macd_histogram = macd_histogram
                 filtered_stock = existing_filter
             else:
                 # Create new record
@@ -254,11 +319,11 @@ class StockFilter:
                     stock_id=stock.id,
                     filter_date=filter_date,
                     time_frame=time_frame,
-                    bias_value=indicators['BIAS_13_Close'].iloc[-1],
-                    rsi_value=indicators[f"RSI_{config['indicators']['rsi'][time_frame]['period']}"].iloc[-1],
-                    macd_value=indicators['MACD'].iloc[-1],
-                    macd_signal=indicators['MACD_Signal'].iloc[-1],
-                    macd_histogram=indicators['MACD_Histogram'].iloc[-1]
+                    bias_value=bias_value,
+                    rsi_value=rsi_value,
+                    macd_value=macd_value,
+                    macd_signal=macd_signal,
+                    macd_histogram=macd_histogram
                 )
                 self.db.add(filtered_stock)
             
@@ -282,16 +347,16 @@ class StockFilter:
             # Add time frame data
             filtered_data[time_frame] = {
                 "BIAS": {
-                    "bias": float(filtered_stock.bias_value)
+                    "bias": float(filtered_stock.bias_value) if filtered_stock.bias_value is not None else None
                 },
                 "RSI": {
-                    "value": float(filtered_stock.rsi_value),
-                    "period": config['indicators']['rsi'][time_frame]['period']
+                    "value": float(filtered_stock.rsi_value) if filtered_stock.rsi_value is not None else None,
+                    "period": rsi_config['period']
                 },
                 "MACD": {
-                    "value": float(filtered_stock.macd_value),
-                    "signal": float(filtered_stock.macd_signal),
-                    "histogram": float(filtered_stock.macd_histogram),
+                    "value": float(filtered_stock.macd_value) if filtered_stock.macd_value is not None else None,
+                    "signal": float(filtered_stock.macd_signal) if filtered_stock.macd_signal is not None else None,
+                    "histogram": float(filtered_stock.macd_histogram) if filtered_stock.macd_histogram is not None else None,
                     "fast_period": config['indicators']['macd'][time_frame]['fast_period'],
                     "slow_period": config['indicators']['macd'][time_frame]['slow_period'],
                     "signal_period": config['indicators']['macd'][time_frame]['signal_period']
