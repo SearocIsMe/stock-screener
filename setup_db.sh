@@ -3,8 +3,8 @@
 # Database configuration
 DB_HOST="localhost"
 DB_PORT="5432"
-DB_USER="postgres"
-DB_PASSWORD="postgres"
+DB_USER="stock_user"
+DB_PASSWORD="7788"
 DB_NAME="stock_screener"
 
 # Colors for output
@@ -44,9 +44,9 @@ redis-cli ping > /dev/null 2>&1 || { echo -e "${YELLOW}Redis service is not runn
 
 # Create database if it doesn't exist
 echo -e "${YELLOW}Creating database if it doesn't exist...${NC}"
-PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1
+PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1
 if [ $? -ne 0 ]; then
-    PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -c "CREATE DATABASE $DB_NAME"
+    PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d postgres -c "CREATE DATABASE $DB_NAME"
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to create database. Please check your PostgreSQL configuration.${NC}"
         exit 1
