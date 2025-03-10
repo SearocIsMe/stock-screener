@@ -134,7 +134,7 @@ class StockFilter:
         
         return filtered_results
     
-    def _get_historical_data(self, symbol, time_frame, days=100):
+    def _get_historical_data(self, symbol, time_frame, days=200):
         """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
         end_date = datetime.now()
@@ -142,12 +142,12 @@ class StockFilter:
         # Set interval and start date based on time frame
         if time_frame == "daily":
             start_date = end_date - timedelta(days=days)
-            interval = "1d"
+            interval = "1d"  # Daily data
         elif time_frame == "weekly":
-            start_date = end_date - timedelta(days=days * 7)
+            start_date = end_date - timedelta(days=days * 2)  # Fetch more data for weekly
             interval = "1wk"
         elif time_frame == "monthly":
-            start_date = end_date - timedelta(days=days * 30)
+            start_date = end_date - timedelta(days=days * 6)  # Fetch more data for monthly
             interval = "1mo"
         else:
             logger.error(f"Invalid time frame: {time_frame}")
@@ -163,7 +163,12 @@ class StockFilter:
             )
             
             if data.empty:
-                logger.warning(f"No historical data for {symbol} ({time_frame})")
+                logger.warning(f"No historical data for {symbol} ({time_frame}) - empty DataFrame")
+            elif len(data) < 30:  # Need at least 30 data points for reliable indicators
+                logger.warning(f"Not enough historical data for {symbol} ({time_frame}) - only {len(data)} data points")
+                # Try to fetch more data if needed
+                if days < 500:
+                    return self._get_historical_data(symbol, time_frame, days=500)
             
             return data
         except Exception as e:
@@ -205,6 +210,11 @@ class StockFilter:
             logger.warning("Empty indicators DataFrame, cannot apply filtering criteria")
             return False
         
+        # Check if we have enough data points
+        if len(indicators) < 1:
+            logger.warning("Not enough data points in indicators DataFrame")
+            return False
+        
         try:
             # Get configuration for the specified time frame
             ema_config = config['indicators']['ema'][time_frame]
@@ -219,14 +229,19 @@ class StockFilter:
                 
                 # Check if the BIAS column exists in the indicators DataFrame
                 if bias_column not in indicators.columns:
-                    logger.warning(f"BIAS column '{bias_column}' not found in indicators")
-                    return False
+                    # Try alternative column names
+                    alternative_columns = [col for col in indicators.columns if col.startswith('BIAS_')]
+                    if alternative_columns:
+                        bias_column = alternative_columns[0]
+                    else:
+                        logger.warning(f"BIAS column '{bias_column}' not found in indicators")
+                        return False
                 
                 # Get BIAS value and threshold
                 bias_value = indicators[bias_column].iloc[-1]
                 bias_threshold = bias_config['threshold']
                 
-                # Check BIAS criteria
+                # Check BIAS criteria - skip if NaN
                 if pd.isna(bias_value) or bias_value >= bias_threshold:
                     return False
                 
@@ -234,6 +249,11 @@ class StockFilter:
                 rsi_period = rsi_config['period']
                 rsi_column = f"RSI_{rsi_period}"
                 
+                # Try alternative RSI column if the expected one doesn't exist
+                if rsi_column not in indicators.columns:
+                    alternative_columns = [col for col in indicators.columns if col.startswith('RSI_')]
+                    if alternative_columns:
+                        rsi_column = alternative_columns[0]
                 if rsi_column not in indicators.columns:
                     logger.warning(f"RSI column '{rsi_column}' not found in indicators")
                     return False
@@ -241,7 +261,7 @@ class StockFilter:
                 rsi_value = indicators[rsi_column].iloc[-1]
                 rsi_oversold = rsi_config['oversold']
                 
-                if pd.isna(rsi_value) or rsi_value >= rsi_oversold:
+                if pd.isna(rsi_value) or rsi_value >= rsi_oversold:  # Skip if NaN
                     return False
                 
                 # Check MACD criteria
@@ -252,7 +272,7 @@ class StockFilter:
                 macd_value = indicators['MACD'].iloc[-1]
                 macd_signal = indicators['MACD_Signal'].iloc[-1]
                 
-                if pd.isna(macd_value) or pd.isna(macd_signal) or macd_value >= macd_signal:
+                if pd.isna(macd_value) or pd.isna(macd_signal) or macd_value >= macd_signal:  # Skip if NaN
                     return False
                 
                 # All criteria met
@@ -262,6 +282,7 @@ class StockFilter:
                 return False
         
         except Exception as e:
+            import traceback
             logger.error(f"Error in _meets_criteria: {e}")
             return False
     
@@ -285,8 +306,13 @@ class StockFilter:
             # Find BIAS column - use the first EMA period from config
             bias_column = None
             if 'periods' in ema_config and len(ema_config['periods']) > 0:
-                ema_period = ema_config['periods'][0]
-                bias_column = f"BIAS_{ema_period}_Close"
+                # Try to find any BIAS column if the expected one doesn't exist
+                bias_columns = [col for col in indicators.columns if col.startswith('BIAS_')]
+                if bias_columns:
+                    bias_column = bias_columns[0]
+                else:
+                    ema_period = ema_config['periods'][0]
+                    bias_column = f"BIAS_{ema_period}_Close"
             
             # Find RSI column
             rsi_column = f"RSI_{rsi_config['period']}"
@@ -299,6 +325,12 @@ class StockFilter:
             ).first()
             
             # Get values from indicators (with safety checks)
+            # Try to find any RSI column if the expected one doesn't exist
+            if rsi_column not in indicators.columns:
+                rsi_columns = [col for col in indicators.columns if col.startswith('RSI_')]
+                if rsi_columns:
+                    rsi_column = rsi_columns[0]
+            
             bias_value = indicators[bias_column].iloc[-1] if bias_column and bias_column in indicators.columns else None
             rsi_value = indicators[rsi_column].iloc[-1] if rsi_column in indicators.columns else None
             macd_value = indicators['MACD'].iloc[-1] if 'MACD' in indicators.columns else None
