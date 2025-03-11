@@ -35,9 +35,9 @@ indicators:
     daily:
       periods: [13]  # EMA periods for daily timeframe
     weekly:
-      periods: [60]  # EMA periods for weekly timeframe
+      periods: [13]  # EMA periods for weekly timeframe
     monthly:
-      periods: [120]  # EMA periods for monthly timeframe
+      periods: [4]  # EMA periods for monthly timeframe
   
   bias:
     # BIAS calculation: (Close - EMA) / EMA * 100
@@ -81,3 +81,4 @@ exchanges:
   - SP500
   - NASDAQ
   - NYSE
+  - AMEX

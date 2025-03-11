@@ -97,29 +97,21 @@ class StockFilter:
                 
                 for time_frame in time_frames:
                     # Get historical data
-                    historical_data = self._get_historical_data(symbol, time_frame)
+                    # Ensure we're using the correct timeframe data
+                    historical_data = self._get_historical_data(symbol, time_frame, days=250)
                     
                     if historical_data.empty:
                         logger.warning(f"No historical data for {symbol} ({time_frame})")
                         continue
                     
-                    # Get next day data (for BIAS calculation)
-                    next_day_data = self._get_next_day_data(symbol, historical_data.index[-1], time_frame)
-                    
-                    if next_day_data.empty:
-                        logger.warning(f"No next day data for {symbol} ({time_frame})")
-                        continue
-                    
-                    # Calculate indicators
-                    indicators = TechnicalIndicators.calculate_all_indicators(historical_data, time_frame)
-                    next_day_indicators = TechnicalIndicators.calculate_next_day_indicators(
-                        historical_data, next_day_data, time_frame
-                    )
+                    # Calculate all indicators using the timeframe-specific data
+                    indicators_df = TechnicalIndicators.calculate_all_indicators(historical_data, time_frame)
+                    latest_indicators = TechnicalIndicators.get_latest_indicators(indicators_df, time_frame)
                     
                     # Apply filtering criteria
-                    if self._meets_criteria(next_day_indicators, time_frame):
+                    if self._meets_criteria(latest_indicators, time_frame):
                         # Store filtered result
-                        result = self._store_filtered_result(symbol, next_day_indicators, time_frame)
+                        result = self._store_filtered_result(symbol, latest_indicators, time_frame)
                         
                         if result:
                             # Add to time frame results
@@ -173,35 +165,6 @@ class StockFilter:
             return data
         except Exception as e:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
-            return pd.DataFrame()
-    
-    def _get_next_day_data(self, symbol, last_date, time_frame):
-        """Get next day data for a symbol directly from yfinance"""
-        # Calculate next date
-        if time_frame == "daily":
-            next_date = last_date + timedelta(days=1)
-            interval = "1d"
-        elif time_frame == "weekly":
-            next_date = last_date + timedelta(days=7)
-            interval = "1wk"
-        elif time_frame == "monthly":
-            next_date = last_date + timedelta(days=30)
-            interval = "1mo"
-        else:
-            logger.error(f"Invalid time frame: {time_frame}")
-            return pd.DataFrame()
-        
-        try:
-            # Fetch data directly from yfinance
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(
-                start=last_date + timedelta(days=1),
-                end=next_date + timedelta(days=1),  # Add an extra day to ensure we get at least one data point
-                interval=interval
-            )
-            return data.head(1)  # Return only the first row
-        except Exception as e:
-            logger.error(f"Error fetching next day data for {symbol}: {e}")
             return pd.DataFrame()
     
     def _meets_criteria(self, indicators, time_frame):
