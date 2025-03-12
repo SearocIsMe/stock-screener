@@ -93,6 +93,10 @@ class StockFilter:
         for symbol in all_stock_symbols:
             try:
                 # Filter stock for each time frame
+                if '^' in symbol:
+                    logger.info(f"skip this {symbol} ({time_frame}) for processing")
+                    continue
+
                 symbol_results = {}
                 
                 for time_frame in time_frames:
@@ -157,7 +161,7 @@ class StockFilter:
             if data.empty:
                 logger.warning(f"No historical data for {symbol} ({time_frame}) - empty DataFrame")
             elif len(data) < 30:  # Need at least 30 data points for reliable indicators
-                logger.warning(f"Not enough historical data for {symbol} ({time_frame}) - only {len(data)} data points")
+                logger.warning(f"Not enough historical data for {symbol} ({time_frame}) - only {len(data)} data points -- retry to collect")
                 # Try to fetch more data if needed
                 if days < 500:
                     return self._get_historical_data(symbol, time_frame, days=500)

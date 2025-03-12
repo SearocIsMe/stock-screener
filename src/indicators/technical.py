@@ -20,6 +20,10 @@ with open(config_path, "r") as config_file:
 
 class TechnicalIndicators:
     """Technical indicators calculation class"""
+    calucated_amount = 0
+
+    def __init__(self):
+        self.calucated_amount = 1
     
     @classmethod
     def calculate_all_indicators(cls, data, time_frame='daily'):
@@ -43,7 +47,7 @@ class TechnicalIndicators:
             return pd.DataFrame()
         
         # Log the timeframe being used for calculations
-        logger.info(f"Calculating indicators for {time_frame} timeframe with {len(data)} data points")
+        logger.debug(f"Calculating indicators for {time_frame} timeframe with {len(data)} data points")
         
         # Get configuration for the specified time frame
         ema_config = config['indicators']['ema'][time_frame]
@@ -82,7 +86,11 @@ class TechnicalIndicators:
         df['MACD_Histogram'] = macd[f'MACDh_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
         
         # Log the calculated indicators
-        logger.debug(f"Calculated indicators for {time_frame} timeframe: {', '.join(df.columns[df.columns.str.contains('EMA|BIAS|RSI|MACD')])}")
+        if cls.calucated_amount > 100:
+            logger.debug(f"{cls.calucated_amount} stocks are calculated indicators for {time_frame} timeframe: {', '.join(df.columns[df.columns.str.contains('EMA|BIAS|RSI|MACD')])}")
+            cls.calucated_amount = 1
+        else:  
+            cls.calucated_amount += 1
         
         return df
     
