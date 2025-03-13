@@ -1,7 +1,8 @@
 """
 API routes for the stock screener application
 """
-import logging
+import logging, sys
+import os
 from src.utils.logging_config import configure_logging
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +34,15 @@ class TriggerFetchFilteringRequest(BaseModel):
     """Trigger fetch and filtering request model"""
     symbols: List[str] = Field(..., description="List of stock symbols or 'all' for all stocks")
     timeFrame: List[str] = Field(..., description="List of time frames (daily, weekly, monthly)")
+    financialFilters: Optional[Dict[str, float]] = Field(
+        None, 
+        description="Financial metrics filters (optional)",
+        example={
+            "gross_margin_threshold": 0.3,  # 毛利率 (Gross Profit Margin)
+            "roe_threshold": 0.15,  # 净资产收益率 (Return on Equity)
+            "rd_ratio_threshold": 0.1  # 研发比率 (R&D Ratio)
+        }
+    )
 
 class RetrieveFilteredStocksRequest(BaseModel):
     """Retrieve filtered stocks request model"""
@@ -78,6 +88,21 @@ async def trigger_fetch_filtering(
         
         # Initialize stock filter
         stock_filter = StockFilter(db)
+        
+        # Apply custom financial filters if provided
+        custom_financial_filters = {}
+        if request.financialFilters:
+            custom_financial_filters = request.financialFilters
+            logger.info(f"Using custom financial filters: {custom_financial_filters}")
+            
+            # Update config with custom thresholds
+            import yaml
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "config.yaml"), "r") as config_file:
+                config = yaml.safe_load(config_file)
+            
+            for key, value in custom_financial_filters.items():
+                if key in config.get('financial_metrics', {}):
+                    config['financial_metrics'][key] = value
         
         # Filter stocks
         filtered_stocks = stock_filter.filter_stocks(

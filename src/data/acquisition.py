@@ -147,6 +147,11 @@ class DataAcquisition:
             
             for symbol in batch:
                 try:
+                    # Skip symbols containing '^' character (indices)
+                    if '^' in symbol:
+                        logger.info(f"Skipping index symbol: {symbol}")
+                        continue
+                        
                     # Get stock info from yfinance
                     ticker = yf.Ticker(symbol)
                     info = ticker.info
@@ -157,7 +162,10 @@ class DataAcquisition:
                         name=info.get('shortName', None),
                         exchange=exchange,
                         sector=info.get('sector', None),
-                        industry=info.get('industry', None)
+                        industry=info.get('industry', None),
+                        gross_margin=info.get('grossMargins', None),
+                        roe=info.get('returnOnEquity', None),
+                        rd_ratio=info.get('researchAndDevelopmentToRevenue', None)
                     )
                 except Exception as e:
                     logger.warning(f"Error getting info for {symbol}: {e}")
@@ -167,15 +175,27 @@ class DataAcquisition:
                         name=None,
                         exchange=exchange,
                         sector=None,
-                        industry=None
+                        industry=None,
+                        gross_margin=None,
+                        roe=None,
+                        rd_ratio=None
                     )
+                    # Sleep to avoid rate limiting
+                    time.sleep(5)
             
             # Sleep to avoid rate limiting
             time.sleep(1)
     
-    def _store_stock_info(self, symbol, name=None, exchange=None, sector=None, industry=None):
+    def _store_stock_info(self, symbol, name=None, exchange=None, sector=None, industry=None, gross_margin=None, roe=None, rd_ratio=None):
         """Store stock information in database"""
         try:
+            # Check if symbol is NaN or None
+            if pd.isna(symbol) or symbol is None:
+                logger.warning("Skipping stock info storage: Symbol is NaN or None")
+                return None
+                
+            # Ensure symbol is a string
+            symbol = str(symbol)
             # Check if stock already exists
             stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
             
@@ -187,6 +207,10 @@ class DataAcquisition:
                     exchange=exchange,
                     sector=sector,
                     industry=industry
+,
+                    gross_margin=gross_margin,
+                    roe=roe,
+                    rd_ratio=rd_ratio
                 )
                 self.db.add(stock)
             else:
@@ -199,6 +223,12 @@ class DataAcquisition:
                     stock.sector = sector
                 if industry:
                     stock.industry = industry
+                if gross_margin is not None:
+                    stock.gross_margin = gross_margin
+                if roe is not None:
+                    stock.roe = roe
+                if rd_ratio is not None:
+                    stock.rd_ratio = rd_ratio
                 stock.updated_at = datetime.utcnow()
             
             self.db.commit()

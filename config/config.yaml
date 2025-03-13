@@ -76,6 +76,13 @@ indicators:
       slow_period: 26
       signal_period: 9
 
+# Financial Metrics Thresholds
+financial_metrics:
+  gross_margin_threshold: 0.3  # 毛利率 (Gross Profit Margin) threshold (30%)
+  roe_threshold: 0.05  # 净资产收益率 (Return on Equity) threshold (15%)
+  rd_ratio_threshold: 0.7  # 研发比率 (R&D Ratio) threshold (10%)
+  enable_financial_filtering: true  # Enable/disable financial metrics filtering
+
 # Stock Exchanges
 exchanges:
   - SP500

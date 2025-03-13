@@ -31,6 +31,9 @@ class Stock(Base):
     industry = Column(String, nullable=True)
     market_cap = Column(Float, nullable=True)
     pe_ratio = Column(Float, nullable=True)
+    gross_margin = Column(Float, nullable=True)  # 毛利率 (Gross Profit Margin)
+    roe = Column(Float, nullable=True)  # 净资产收益率 (Return on Equity)
+    rd_ratio = Column(Float, nullable=True)  # 研发比率 (R&D Ratio)
     pb_ratio = Column(Float, nullable=True)
     dividend_yield = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -83,6 +86,9 @@ class FilteredStock(Base):
     macd_value = Column(Float, nullable=True)
     macd_signal = Column(Float, nullable=True)
     macd_histogram = Column(Float, nullable=True)
+    gross_margin = Column(Float, nullable=True)  # 毛利率 (Gross Profit Margin)
+    roe = Column(Float, nullable=True)  # 净资产收益率 (Return on Equity)
+    rd_ratio = Column(Float, nullable=True)  # 研发比率 (R&D Ratio)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

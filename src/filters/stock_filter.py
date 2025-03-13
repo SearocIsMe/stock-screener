@@ -113,7 +113,7 @@ class StockFilter:
                     latest_indicators = TechnicalIndicators.get_latest_indicators(indicators_df, time_frame)
                     
                     # Apply filtering criteria
-                    if self._meets_criteria(latest_indicators, time_frame):
+                    if self._meets_criteria(latest_indicators, time_frame, symbol):
                         # Store filtered result
                         result = self._store_filtered_result(symbol, latest_indicators, time_frame)
                         
@@ -171,7 +171,7 @@ class StockFilter:
             logger.error(f"Error fetching historical data for {symbol}: {e}")
             return pd.DataFrame()
     
-    def _meets_criteria(self, indicators, time_frame):
+    def _meets_criteria(self, indicators, time_frame, symbol):
         """Check if indicators meet filtering criteria"""
         if indicators.empty:
             logger.warning("Empty indicators DataFrame, cannot apply filtering criteria")
@@ -188,6 +188,11 @@ class StockFilter:
             bias_config = config['indicators']['bias'][time_frame]
             rsi_config = config['indicators']['rsi'][time_frame]
             macd_config = config['indicators']['macd'][time_frame]
+            # Add financial metrics thresholds with default values if not in config
+            financial_config = config.get('financial_metrics', {})
+            gross_margin_threshold = financial_config.get('gross_margin_threshold', 0.3)  # Default 30%
+            roe_threshold = financial_config.get('roe_threshold', 0.15)  # Default 15%
+            rd_ratio_threshold = financial_config.get('rd_ratio_threshold', 0.1)  # Default 10%
             
             # Find BIAS column - use the first EMA period from config
             if 'periods' in ema_config and len(ema_config['periods']) > 0:
@@ -241,6 +246,27 @@ class StockFilter:
                 
                 if pd.isna(macd_value) or pd.isna(macd_signal) or macd_value >= macd_signal:  # Skip if NaN
                     return False
+                
+                # Get stock for financial metrics
+                stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
+                if stock:
+                    # Check financial metrics if available
+                    # 毛利率 (Gross Profit Margin) check
+                    if stock.gross_margin is not None and stock.gross_margin < gross_margin_threshold:
+                        logger.info(f"Stock {stock.symbol} failed gross margin check: {stock.gross_margin} < {gross_margin_threshold}")
+                        return False
+                    
+                    # 净资产收益率 (Return on Equity) check
+                    if stock.roe is not None and stock.roe < roe_threshold:
+                        logger.info(f"Stock {stock.symbol} failed ROE check: {stock.roe} < {roe_threshold}")
+                        return False
+                    
+                    # 研发比率 (R&D Ratio) check - higher is better for tech companies
+                    if stock.sector == "Technology" and stock.rd_ratio is not None and stock.rd_ratio < rd_ratio_threshold:
+                        logger.info(f"Stock {stock.symbol} failed R&D ratio check: {stock.rd_ratio} < {rd_ratio_threshold}")
+                        return False
+                else:
+                    logger.warning(f"Stock not found in database for financial metrics check")
                 
                 # All criteria met
                 return True
@@ -323,6 +349,10 @@ class StockFilter:
                     macd_value=macd_value,
                     macd_signal=macd_signal,
                     macd_histogram=macd_histogram
+,
+                    gross_margin=stock.gross_margin,
+                    roe=stock.roe,
+                    rd_ratio=stock.rd_ratio
                 )
                 self.db.add(filtered_stock)
             
@@ -359,6 +389,16 @@ class StockFilter:
                     "fast_period": config['indicators']['macd'][time_frame]['fast_period'],
                     "slow_period": config['indicators']['macd'][time_frame]['slow_period'],
                     "signal_period": config['indicators']['macd'][time_frame]['signal_period']
+                },
+                "FinancialMetrics": {
+                    "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
+                    "roe": float(stock.roe) if stock.roe is not None else None,
+                    "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
+                    "thresholds": {
+                        "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                        "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
+                        "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
+                    }
                 }
             }
             
