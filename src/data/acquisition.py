@@ -206,8 +206,7 @@ class DataAcquisition:
                     name=name,
                     exchange=exchange,
                     sector=sector,
-                    industry=industry
-,
+                    industry=industry,
                     gross_margin=gross_margin,
                     roe=roe,
                     rd_ratio=rd_ratio
@@ -341,7 +340,7 @@ class DataAcquisition:
     def _store_stock_prices(self, symbol, data, time_frame):
         """Store stock prices in database"""
         try:
-            # Get stock ID
+            # Get or create stock
             stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
             if not stock:
                 logger.warning(f"Stock {symbol} not found in database, creating it")
@@ -354,6 +353,28 @@ class DataAcquisition:
                 # Skip rows with NaN values
                 if row.isnull().any():
                     continue
+                    
+                # Handle different column name formats
+                price_data = {}
+                column_mappings = {
+                    'open': ['Open', 'open'],
+                    'high': ['High', 'high'],
+                    'low': ['Low', 'low'],
+                    'close': ['Close', 'close'],
+                    'volume': ['Volume', 'volume']
+                }
+                
+                # Try to find each required column
+                for db_col, possible_cols in column_mappings.items():
+                    for col in possible_cols:
+                        if col in row:
+                            price_data[db_col] = row[col]
+                            break
+                
+                # Skip if we couldn't find all required columns
+                if len(price_data) < 5:
+                    logger.warning(f"Skipping row for {symbol} at {date}: missing required columns")
+                    continue
                 
                 # Check if price already exists
                 existing_price = self.db.query(StockPrice).filter(
@@ -364,29 +385,29 @@ class DataAcquisition:
                 
                 if existing_price:
                     # Update existing price
-                    existing_price.open = row["Open"]
-                    existing_price.high = row["High"]
-                    existing_price.low = row["Low"]
-                    existing_price.close = row["Close"]
-                    existing_price.adjusted_close = row["Close"]  # Using Close as Adj Close since we use auto_adjust=True
-                    existing_price.volume = int(row["Volume"])
+                    existing_price.open = price_data['open']
+                    existing_price.high = price_data['high']
+                    existing_price.low = price_data['low']
+                    existing_price.close = price_data['close']
+                    existing_price.adjusted_close = price_data['close']  # Using Close as Adj Close since we use auto_adjust=True
+                    existing_price.volume = int(price_data['volume'])
                 else:
                     # Create new price
                     price = StockPrice(
                         stock_id=stock.id,
                         date=date,
-                        open=row["Open"],
-                        high=row["High"],
-                        low=row["Low"],
-                        close=row["Close"],
-                        adjusted_close=row["Close"],  # Using Close as Adj Close since we use auto_adjust=True
-                        volume=int(row["Volume"]),
+                        open=price_data['open'],
+                        high=price_data['high'],
+                        low=price_data['low'],
+                        close=price_data['close'],
+                        adjusted_close=price_data['close'],  # Using Close as Adj Close since we use auto_adjust=True
+                        volume=int(price_data['volume']),
                         time_frame=time_frame
                     )
                     self.db.add(price)
             
             self.db.commit()
-            logger.info(f"Stored {len(data)} prices for {symbol} ({time_frame})")
+            logger.info(f"Successfully stored prices for {symbol} ({time_frame})")
         
         except Exception as e:
             self.db.rollback()
