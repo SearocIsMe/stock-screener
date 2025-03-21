@@ -5,6 +5,7 @@ import logging, sys
 import os
 from src.utils.logging_config import configure_logging
 import pandas as pd
+import json
 from typing import List, Optional, Dict, Any, Union, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.data.database import get_db
 from src.data.acquisition import DataAcquisition
 from src.filters.stock_filter import StockFilter
+from src.utils.async_job import AsyncJob
 
 # Configure logging
 configure_logging()
@@ -45,9 +47,16 @@ class TriggerFetchFilteringRequest(BaseModel):
         }
     )
 
+class JobResponse(BaseModel):
+    """Job response model"""
+    job_id: str
+    message: str
+
 class RetrieveFilteredStocksRequest(BaseModel):
     """Retrieve filtered stocks request model"""
-    timeFrame: List[str] = Field(..., description="List of time frames (daily, weekly, monthly)")
+    job_id: Optional[str] = Field(None, description="Job ID from trigger_fetch_filtering")
+    timeFrame: Optional[List[str]] = Field(None, description="List of time frames (daily, weekly, monthly)")
+    stockNameOnly: Optional[bool] = Field(False, description="Return only stock names if true")
     recentDay: int = Field(1, description="Number of recent days to retrieve (0 for today)")
 
 class ApiResponse(BaseModel):
@@ -55,6 +64,11 @@ class ApiResponse(BaseModel):
     success: bool
     message: str
     data: Optional[Dict[str, Any]] = None
+
+class JobStatusResponse(ApiResponse):
+    """Job status response model"""
+    status: str
+    request_details: Optional[Dict[str, Any]] = None
 
 class StockAllocation(BaseModel):
     """Stock allocation model for performance retreat"""
@@ -107,7 +121,7 @@ class PerformanceRetreatApiResponse(ApiResponse):
     """Performance retreat API response model"""
     data: Optional[PerformanceRetreatResponse] = None
 
-@router.post("/trigger_fetch_filtering", response_model=ApiResponse)
+@router.post("/trigger_fetch_filtering", response_model=JobResponse)
 async def trigger_fetch_filtering(
     request: TriggerFetchFilteringRequest,
     db: Session = Depends(get_db)
@@ -129,6 +143,42 @@ async def trigger_fetch_filtering(
         API response with filtered stocks
     """
     try:
+        # Create job
+        job_id = AsyncJob.create_job("filtering", request.dict())
+        
+        # Run async job
+        AsyncJob.run_async(
+            "filtering", job_id, 
+            _process_filter_stocks, request.dict(), db
+        )
+        
+        return JobResponse(
+            job_id=job_id,
+            message="Filtering job started successfully"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in trigger_fetch_filtering: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error starting filtering job: {str(e)}"
+        )
+
+def _process_filter_stocks(request_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    """
+    Process filter stocks request
+    
+    Args:
+        request_data: Request data
+        db: Database session
+        
+    Returns:
+        Filtered stocks
+    """
+    try:
+        # Convert request data to request object
+        request = TriggerFetchFilteringRequest(**request_data)
+        
         # Validate time frames
         valid_time_frames = ["daily", "weekly", "monthly"]
         for tf in request.timeFrame:
@@ -162,17 +212,12 @@ async def trigger_fetch_filtering(
             time_frames=request.timeFrame
         )
         
-        return ApiResponse(
-            success=True,
-            message=f"Successfully filtered {len(filtered_stocks)} stocks",
-            data={"filtered_stocks": filtered_stocks}
-        )
+        return {"filtered_stocks": filtered_stocks}
     
     except Exception as e:
-        logger.error(f"Error in trigger_fetch_filtering: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error filtering stocks: {str(e)}"
+        logger.error(f"Error in _process_filter_stocks: {e}")
+        raise Exception(
+            f"Error filtering stocks: {str(e)}"
         )
 
 @router.post("/retrieve_filtered_stocks", response_model=ApiResponse)
@@ -196,6 +241,58 @@ async def retrieve_filtered_stocks(
         API response with filtered stocks
     """
     try:
+        # Check if job_id is provided
+        if request.job_id:
+            # Get job status
+            job_data = AsyncJob.get_job_status("filtering", request.job_id)
+            
+            # Check if job exists
+            if not job_data:
+                return ApiResponse(
+                    success=False,
+                    message=f"Job with ID {request.job_id} not found",
+                    data={"error": "Invalid job ID"}
+                )
+            
+            # Check job status
+            if job_data["status"] == "processing":
+                return ApiResponse(
+                    success=False,
+                    message=f"The system is processing the request for your input: {json.dumps(job_data['request'], indent=2)}",
+                    data={"status": "processing"}
+                )
+            elif job_data["status"] == "error":
+                return ApiResponse(
+                    success=False,
+                    message=f"Error processing job: {job_data.get('result', {}).get('error', 'Unknown error')}",
+                    data={"status": "error"}
+                )
+            elif job_data["status"] == "done":
+                # Get filtered stocks from job result
+                filtered_stocks = job_data["result"]["filtered_stocks"]
+                
+                # Return only stock names if requested
+                if request.stockNameOnly:
+                    return ApiResponse(
+                        success=True,
+                        message=f"Successfully retrieved {len(filtered_stocks)} filtered stocks",
+                        data={"filtered_stocks": list(filtered_stocks.keys())}
+                    )
+                
+                return ApiResponse(
+                    success=True,
+                    message=f"Successfully retrieved {len(filtered_stocks)} filtered stocks",
+                    data={"filtered_stocks": filtered_stocks}
+                )
+        
+        # If no job_id is provided, use the old method
+        if not request.timeFrame:
+            return ApiResponse(
+                success=False,
+                message="Either job_id or timeFrame must be provided",
+                data={"error": "Missing required parameters"}
+            )
+        
         # Validate time frames
         valid_time_frames = ["daily", "weekly", "monthly"]
         for tf in request.timeFrame:
@@ -213,6 +310,14 @@ async def retrieve_filtered_stocks(
             time_frames=request.timeFrame,
             recent_days=request.recentDay
         )
+        
+        # Return only stock names if requested
+        if request.stockNameOnly:
+            return ApiResponse(
+                success=True,
+                message=f"Successfully retrieved {len(filtered_stocks)} filtered stocks",
+                data={"filtered_stocks": list(filtered_stocks.keys())}
+            )
         
         return ApiResponse(
             success=True,
@@ -293,7 +398,7 @@ async def fetch_stock_history(
         )
 
 @router.post("/performance_retreat", response_model=PerformanceRetreatApiResponse)
-async def performance_retreat(
+async def performance_retreat_async(
     request: PerformanceRetreatRequest,
     db: Session = Depends(get_db)
 ):
@@ -313,12 +418,48 @@ async def performance_retreat(
         API response with performance metrics
     """
     try:
+        # Create job
+        job_id = AsyncJob.create_job("retreat", request.dict())
+        
+        # Run async job
+        AsyncJob.run_async(
+            "retreat", job_id, 
+            _process_performance_retreat, request.dict(), db
+        )
+        
+        return PerformanceRetreatApiResponse(
+            success=True,
+            message=f"Performance retreat job started successfully with ID: {job_id}",
+            data=None
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in performance_retreat: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error starting performance retreat job: {str(e)}"
+        )
+
+def _process_performance_retreat(request_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    """
+    Process performance retreat request
+    
+    Args:
+        request_data: Request data
+        db: Database session
+        
+    Returns:
+        Performance retreat data
+    """
+    try:
+        # Convert request data to request object
+        request = PerformanceRetreatRequest(**request_data)
+        
         # Validate input
         total_percentage = sum(stock.percentage for stock in request.stocks)
         if not (99.0 <= total_percentage <= 101.0):  # Allow for small rounding errors
-            raise HTTPException(
-                status_code=400,
-                detail=f"Total percentage allocation must be 100%, got {total_percentage}%"
+            raise Exception(
+                f"Total percentage allocation must be 100%, got {total_percentage}%"
             )
         
         # Parse dates
@@ -327,18 +468,16 @@ async def performance_retreat(
         try:
             start_date = datetime.fromisoformat(request.start_date)
         except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid start_date format: {request.start_date}. Use YYYY-MM-DD format."
+            raise Exception(
+                f"Invalid start_date format: {request.start_date}. Use YYYY-MM-DD format."
             )
         
         if request.end_date:
             try:
                 end_date = datetime.fromisoformat(request.end_date)
             except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid end_date format: {request.end_date}. Use YYYY-MM-DD format."
+                raise Exception(
+                    f"Invalid end_date format: {request.end_date}. Use YYYY-MM-DD format."
                 )
         else:
             end_date = datetime.now()
@@ -533,19 +672,75 @@ async def performance_retreat(
             detailed_performances=detailed_performances
         )
         
-        return PerformanceRetreatApiResponse(
-            success=True,
-            message="Successfully calculated portfolio performance",
-            data=response
-        )
+        return response.dict()
     
     except HTTPException as e:
         # Re-raise HTTP exceptions
         raise
     
     except Exception as e:
-        logger.error(f"Error in performance_retreat: {e}")
+        logger.error(f"Error in _process_performance_retreat: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error calculating portfolio performance: {str(e)}"
+        )
+
+@router.get("/get_retreat/{job_id}", response_model=PerformanceRetreatApiResponse)
+async def get_retreat(
+    job_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get performance retreat results
+    
+    Args:
+        job_id: Job ID from performance_retreat
+        db: Database session
+        
+    Returns:
+        API response with performance metrics
+    """
+    try:
+        # Get job status
+        job_data = AsyncJob.get_job_status("retreat", job_id)
+        
+        # Check if job exists
+        if not job_data:
+            return PerformanceRetreatApiResponse(
+                success=False,
+                message=f"Job with ID {job_id} not found",
+                data=None
+            )
+        
+        # Check job status
+        if job_data["status"] == "processing":
+            return PerformanceRetreatApiResponse(
+                success=False,
+                message=f"The system is processing the request for your input: {json.dumps(job_data['request'], indent=2)}",
+                data=None
+            )
+        elif job_data["status"] == "error":
+            return PerformanceRetreatApiResponse(
+                success=False,
+                message=f"Error processing job: {job_data.get('result', {}).get('error', 'Unknown error')}",
+                data=None
+            )
+        elif job_data["status"] == "done":
+            # Get performance retreat data from job result
+            performance_data = job_data["result"]
+            
+            # Convert to PerformanceRetreatResponse
+            response = PerformanceRetreatResponse(**performance_data)
+            
+            return PerformanceRetreatApiResponse(
+                success=True,
+                message="Successfully retrieved performance retreat results",
+                data=response
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in get_retreat: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving performance retreat results: {str(e)}"
         )
