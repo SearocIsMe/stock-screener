@@ -365,11 +365,40 @@ class StockFilter:
             existing_data = self.redis.get(redis_key)
             if existing_data:
                 filtered_data = json.loads(existing_data)
+                
+                # Check if FinancialMetrics exists at the outer level
+                if "FinancialMetrics" not in filtered_data:
+                    # Add FinancialMetrics to the outer level
+                    filtered_data["FinancialMetrics"] = {
+                        "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
+                        "roe": float(stock.roe) if stock.roe is not None else None,
+                        "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
+                        "thresholds": {
+                            "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                            "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
+                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
+                        }
+                    }
+                    
+                    # Remove FinancialMetrics from time frames if they exist
+                    for tf in filtered_data:
+                        if tf != "metaData" and tf != "FinancialMetrics" and "FinancialMetrics" in filtered_data[tf]:
+                            del filtered_data[tf]["FinancialMetrics"]
             else:
                 filtered_data = {
                     "metaData": {
                         "stock": symbol,
                         "filterTime": datetime.now().isoformat()
+                    },
+                    "FinancialMetrics": {
+                        "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
+                        "roe": float(stock.roe) if stock.roe is not None else None,
+                        "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
+                        "thresholds": {
+                            "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                            "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
+                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
+                        }
                     }
                 }
             
@@ -389,16 +418,6 @@ class StockFilter:
                     "fast_period": config['indicators']['macd'][time_frame]['fast_period'],
                     "slow_period": config['indicators']['macd'][time_frame]['slow_period'],
                     "signal_period": config['indicators']['macd'][time_frame]['signal_period']
-                },
-                "FinancialMetrics": {
-                    "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
-                    "roe": float(stock.roe) if stock.roe is not None else None,
-                    "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
-                    "thresholds": {
-                        "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
-                        "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
-                        "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
-                    }
                 }
             }
             
@@ -450,6 +469,31 @@ class StockFilter:
                     continue
                 
                 stock_data = json.loads(data)
+
+                # Check if this is old format data (FinancialMetrics in time frames)
+                if "FinancialMetrics" not in stock_data:
+                    # Try to find financial metrics in any time frame
+                    financial_metrics = None
+                    for tf in time_frames:
+                        if tf in stock_data and "FinancialMetrics" in stock_data[tf]:
+                            financial_metrics = stock_data[tf]["FinancialMetrics"]
+                            break
+                    
+                    # If found, add to outer level and remove from time frames
+                    if financial_metrics:
+                        stock_data["FinancialMetrics"] = financial_metrics
+                        
+                        # Remove from time frames
+                        for tf in time_frames:
+                            if tf in stock_data and "FinancialMetrics" in stock_data[tf]:
+                                del stock_data[tf]["FinancialMetrics"]
+                        
+                        # Update in Redis
+                        expiration = config["database"]["redis"]["expiration_days"] * 86400
+                        self.redis.set(key, json.dumps(stock_data), ex=expiration)
+                    else:
+                        # If not found, add empty financial metrics
+                        stock_data["FinancialMetrics"] = {}
                 
                 # Check if stock has all required time frames
                 has_all_time_frames = all(tf in stock_data for tf in time_frames)
@@ -461,6 +505,7 @@ class StockFilter:
                     # Add to filtered stocks
                     filtered_stocks[symbol] = {
                         "metaData": stock_data["metaData"],
+                        "FinancialMetrics": stock_data.get("FinancialMetrics", {}),
                         **{tf: stock_data[tf] for tf in time_frames}
                     }
             
