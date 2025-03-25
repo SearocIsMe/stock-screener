@@ -12,6 +12,13 @@ A comprehensive stock screening application that filters stocks based on technic
 - Store filtered results in PostgreSQL and Redis
 - RESTful API for accessing filtered stocks
 
+## Recent Updates
+
+- **Rate Limit Handling**: Added robust retry mechanism with exponential backoff for Yahoo Finance API rate limits
+- **API Improvements**: Enhanced `/api/retrieve_filtered_stocks` to properly perform AND operations when multiple timeframes are specified
+- **Data Structure**: Fixed response structure to ensure FinancialMetrics and metaData are consistently at the same level as timeframes
+- **Error Handling**: Improved JSON parsing in `/api/performance_retreat` endpoint to handle special characters and formatting issues
+
 ## Technical Stack
 
 - **Backend**: Python
@@ -107,12 +114,14 @@ All endpoints are prefixed with `/api` and return a standardized response format
 
 - `POST /api/retrieve_filtered_stocks`: Retrieve filtered stocks from Redis
   - Scans Redis for filtered stocks
-  - Filters by time frame
-  - Returns filtered stocks
+  - Filters by time frame (performs AND operation when multiple timeframes are specified)
+  - Returns filtered stocks with consistent structure (FinancialMetrics and metaData at same level as timeframes)
   - Request body:
     ```json
     {
+      "job_id": "optional_job_id_from_trigger_fetch_filtering",
       "timeFrame": ["daily", "weekly", "monthly"],
+      "stockNameOnly": false,
       "recentDay": 1
     }
     ```
@@ -130,6 +139,16 @@ All endpoints are prefixed with `/api` and return a standardized response format
                "stock": "PUBM",
                "filterTime": "2025-03-12T14:32:49.035766"
             },
+            "FinancialMetrics": {
+               "gross_margin": 0.45,
+               "roe": 0.22,
+               "rd_ratio": 0.15,
+               "thresholds": {
+                 "gross_margin": 0.3,
+                 "roe": 0.15,
+                 "rd_ratio": 0.1
+               }
+            },
             "daily": {
                "BIAS": {
                   "bias": -15.794040576424631
@@ -145,16 +164,6 @@ All endpoints are prefixed with `/api` and return a standardized response format
                   "fast_period": 12,
                   "slow_period": 26,
                   "signal_period": 9
-               },
-               "FinancialMetrics": {
-                  "gross_margin": 0.45,
-                  "roe": 0.22,
-                  "rd_ratio": 0.15,
-                  "thresholds": {
-                    "gross_margin": 0.3,
-                    "roe": 0.15,
-                    "rd_ratio": 0.1
-                  }
                }
             },
             "weekly": {
@@ -172,16 +181,6 @@ All endpoints are prefixed with `/api` and return a standardized response format
                   "fast_period": 12,
                   "slow_period": 26,
                   "signal_period": 9
-               },
-               "FinancialMetrics": {
-                  "gross_margin": 0.45,
-                  "roe": 0.22,
-                  "rd_ratio": 0.15,
-                  "thresholds": {
-                    "gross_margin": 0.3,
-                    "roe": 0.15,
-                    "rd_ratio": 0.1
-                  }
                }
             }
             }
@@ -194,6 +193,7 @@ All endpoints are prefixed with `/api` and return a standardized response format
 - `POST /api/fetch_stock_history`: Fetch stock history for specified symbols
   - Fetches stock history for specified symbols
   - Stores in database
+  - Implements retry mechanism for rate limit handling
   - Request body:
     ```json
     {
@@ -209,6 +209,7 @@ All endpoints are prefixed with `/api` and return a standardized response format
   - Calculates the performance of each stock in the portfolio from start_date to end_date
   - Calculates the total portfolio performance
   - Returns detailed performance metrics
+  - Handles special characters in JSON (like fullwidth commas)
   - Request body:(take some stocks that met the 3 BIAS strategy, 5 stocks among the 21 stock screened on 13-03-2025)
     ```json
         {

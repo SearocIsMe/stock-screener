@@ -4,10 +4,11 @@ API routes for the stock screener application
 import logging, sys
 import os
 from src.utils.logging_config import configure_logging
+import re
 import pandas as pd
 import json
 from typing import List, Optional, Dict, Any, Union, Tuple
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from src.data.database import get_db
@@ -271,6 +272,32 @@ async def retrieve_filtered_stocks(
                 # Get filtered stocks from job result
                 filtered_stocks = job_data["result"]["filtered_stocks"]
                 
+                # Apply AND operation for multiple timeframes if timeFrame is provided
+                if request.timeFrame:
+                    # Filter stocks that have all the requested timeframes
+                    filtered_stocks = {
+                        symbol: data for symbol, data in filtered_stocks.items()
+                        if all(tf in data for tf in request.timeFrame) and 
+                           "metaData" in data and 
+                           "FinancialMetrics" in data
+                    }
+                    
+                    # For each stock, only include the requested timeframes
+                    for symbol, data in filtered_stocks.items():
+                        # Create a new data structure with only the requested timeframes
+                        filtered_data = {
+                            "metaData": data["metaData"],
+                            "FinancialMetrics": data["FinancialMetrics"]
+                        }
+                        
+                        # Add only the requested timeframes
+                        for tf in request.timeFrame:
+                            if tf in data:
+                                filtered_data[tf] = data[tf]
+                        
+                        # Replace the original data with the filtered data
+                        filtered_stocks[symbol] = filtered_data
+                
                 # Return only stock names if requested
                 if request.stockNameOnly:
                     return ApiResponse(
@@ -439,6 +466,7 @@ async def performance_retreat_async(
             status_code=500,
             detail=f"Error starting performance retreat job: {str(e)}"
         )
+
 
 def _process_performance_retreat(request_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
     """

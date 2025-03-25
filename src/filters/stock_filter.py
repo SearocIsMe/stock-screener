@@ -125,6 +125,27 @@ class StockFilter:
                 # If any time frame results exist, add to filtered results
                 if symbol_results:
                     filtered_results[symbol] = symbol_results
+                    
+                    # Add metaData and FinancialMetrics at the same level as timeframes
+                    stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
+                    if stock:
+                        # Add metaData
+                        filtered_results[symbol]["metaData"] = {
+                            "stock": symbol,
+                            "filterTime": datetime.now().isoformat()
+                        }
+                        
+                        # Add FinancialMetrics
+                        filtered_results[symbol]["FinancialMetrics"] = {
+                            "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
+                            "roe": float(stock.roe) if stock.roe is not None else None,
+                            "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
+                            "thresholds": {
+                                "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                                "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
+                                "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
+                            }
+                        }
             
             except Exception as e:
                 logger.error(f"Error filtering {symbol}: {e}")
@@ -136,7 +157,7 @@ class StockFilter:
         # Calculate date range
         end_date = datetime.now()
         max_retries = 5  # Maximum number of retries
-        retry_delay = 10  # Initial delay in seconds
+        retry_delay = 20  # Initial delay in seconds
         
         # Set interval and start date based on time frame
         if time_frame == "daily":
@@ -175,7 +196,7 @@ class StockFilter:
             logger.warning(f"Error fetching historical data for {symbol}: {e}")
             
             # Check if it's a rate limit error
-            if "exceed rate limit" in error_str.lower() or "try it later" in error_str.lower():
+            if "Rate limited.".lower() in error_str.lower() or "Try after a while".lower() in error_str.lower():
                 # Implement retry mechanism with exponential backoff
                 retry_count = 0
                 while retry_count < max_retries:
@@ -184,6 +205,7 @@ class StockFilter:
                     logger.info(f"Rate limit exceeded. Sleeping for {current_delay} seconds before retry (attempt {retry_count}/{max_retries})...")
                     time.sleep(current_delay)
                     
+
                     try:
                         # Retry fetching data
                         ticker = yf.Ticker(symbol)
@@ -198,6 +220,8 @@ class StockFilter:
                             return data
                     except Exception as retry_error:
                         logger.warning(f"Retry {retry_count}/{max_retries} failed: {retry_error}")
+                        # increase the retry delay in case the delay time is not enough.
+                        retry_delay += current_delay
                 
                 logger.error(f"All {max_retries} retries failed for {symbol}")
             
