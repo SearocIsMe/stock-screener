@@ -158,7 +158,7 @@ class StockFilter:
     def _get_historical_data(self, symbol, time_frame, days=200):
         """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
-        chinese_stock_pattern = r'^\d+\.(SH|SZ|BJ)$'
+        chinese_stock_pattern = r'^\d+\.(sh|sz|bj)$'
         end_date = datetime.now()
         max_retries = 5  # Maximum number of retries
         retry_delay = 20  # Initial delay in seconds
@@ -171,7 +171,7 @@ class StockFilter:
             start_date = end_date - timedelta(days=days * 2)  # Fetch more data for weekly
             interval = "1wk"
         elif time_frame == "monthly":
-            start_date = end_date - timedelta(days=days * 6)  # Fetch more data for monthly
+            start_date = end_date - timedelta(days=days * 4)  # Fetch more data for monthly
             interval = "1mo"
         else:
             logger.error(f"Invalid time frame: {time_frame}")
