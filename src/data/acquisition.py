@@ -184,7 +184,7 @@ class DataAcquisition:
                     time.sleep(5)
             
             # Sleep to avoid rate limiting
-            time.sleep(1)
+            time.sleep(4)
     
     def _store_stock_info(self, symbol, name=None, exchange=None, sector=None, industry=None, gross_margin=None, roe=None, rd_ratio=None):
         """Store stock information in database"""
@@ -333,7 +333,7 @@ class DataAcquisition:
                         time.sleep(RETRY_DELAY)
             
             # Sleep to avoid rate limiting
-            time.sleep(1)
+            time.sleep(3)
         
         return results
     

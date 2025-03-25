@@ -4,6 +4,7 @@ Stock filtering module for filtering stocks based on technical indicators
 import os
 import json
 import logging
+import time
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
 import yfinance as yf
@@ -134,6 +135,8 @@ class StockFilter:
         """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
         end_date = datetime.now()
+        max_retries = 5  # Maximum number of retries
+        retry_delay = 10  # Initial delay in seconds
         
         # Set interval and start date based on time frame
         if time_frame == "daily":
@@ -168,7 +171,37 @@ class StockFilter:
             
             return data
         except Exception as e:
-            logger.error(f"Error fetching historical data for {symbol}: {e}")
+            error_str = str(e)
+            logger.warning(f"Error fetching historical data for {symbol}: {e}")
+            
+            # Check if it's a rate limit error
+            if "exceed rate limit" in error_str.lower() or "try it later" in error_str.lower():
+                # Implement retry mechanism with exponential backoff
+                retry_count = 0
+                while retry_count < max_retries:
+                    retry_count += 1
+                    current_delay = retry_delay * retry_count  # Exponential backoff
+                    logger.info(f"Rate limit exceeded. Sleeping for {current_delay} seconds before retry (attempt {retry_count}/{max_retries})...")
+                    time.sleep(current_delay)
+                    
+                    try:
+                        # Retry fetching data
+                        ticker = yf.Ticker(symbol)
+                        data = ticker.history(
+                            start=start_date,
+                            end=end_date,
+                            interval=interval
+                        )
+                        
+                        if not data.empty:
+                            logger.info(f"Successfully retrieved data for {symbol} after {retry_count} retries")
+                            return data
+                    except Exception as retry_error:
+                        logger.warning(f"Retry {retry_count}/{max_retries} failed: {retry_error}")
+                
+                logger.error(f"All {max_retries} retries failed for {symbol}")
+            
+            # Return empty DataFrame if all retries failed or it's not a rate limit error
             return pd.DataFrame()
     
     def _meets_criteria(self, indicators, time_frame, symbol):
