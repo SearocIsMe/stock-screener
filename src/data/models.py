@@ -12,6 +12,7 @@ class Exchange(enum.Enum):
     SP500 = "SP500"
     NASDAQ = "NASDAQ"
     NYSE = "NYSE"
+    ACN = "ACN"
 
 class TimeFrame(enum.Enum):
     """Time frame enumeration"""

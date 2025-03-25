@@ -4,12 +4,15 @@ Stock filtering module for filtering stocks based on technical indicators
 import os
 import json
 import logging
+import re
 import time
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
+import akshare as ak
 import yfinance as yf
 import yaml
 import pandas as pd
+import requests
 from sqlalchemy.orm import Session
 from src.data.database import get_redis
 from src.data.models import Stock, StockPrice, FilteredStock
@@ -72,7 +75,7 @@ class StockFilter:
                     all_stock_symbols.extend(self.data_acquisition.fetch_stock_symbols())
             
             # Case 2: Symbol is an exchange name (SP500, NASDAQ, NYSE, AMEX)
-            elif symbol_upper in ["SP500", "NASDAQ", "NYSE", "AMEX"]:
+            elif symbol_upper in ["SP500", "NASDAQ", "NYSE", "AMEX", "ACN"]:
                 exchange_lower = symbol_upper.lower()
                 symbols_json = self.redis.get(f"symbols_{exchange_lower}")
                 if symbols_json:
@@ -95,7 +98,7 @@ class StockFilter:
             try:
                 # Filter stock for each time frame
                 if '^' in symbol:
-                    logger.info(f"skip this {symbol} ({time_frame}) for processing")
+                    logger.info(f"skip this {symbol} for processing")
                     continue
 
                 symbol_results = {}
@@ -103,7 +106,7 @@ class StockFilter:
                 for time_frame in time_frames:
                     # Get historical data
                     # Ensure we're using the correct timeframe data
-                    historical_data = self._get_historical_data(symbol, time_frame, days=250)
+                    historical_data = self._get_historical_data(symbol, time_frame, days=60)
                     
                     if historical_data.empty:
                         logger.warning(f"No historical data for {symbol} ({time_frame})")
@@ -151,10 +154,11 @@ class StockFilter:
                 logger.error(f"Error filtering {symbol}: {e}")
         
         return filtered_results
-    
+
     def _get_historical_data(self, symbol, time_frame, days=200):
         """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
+        chinese_stock_pattern = r'^\d+\.(SH|SZ|BJ)$'
         end_date = datetime.now()
         max_retries = 5  # Maximum number of retries
         retry_delay = 20  # Initial delay in seconds
@@ -172,6 +176,54 @@ class StockFilter:
         else:
             logger.error(f"Invalid time frame: {time_frame}")
             return pd.DataFrame()
+        
+        # Check if it's a Chinese A stock
+        is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
+        
+        if is_chinese_a_stock:
+            logger.info(f"Fetching historical data for Chinese A stock: {symbol}")
+            try:
+                # Extract stock code and market
+                parts = symbol.split('.')
+                if len(parts) != 2:
+                    logger.warning(f"Invalid Chinese A stock symbol format: {symbol}")
+                    return pd.DataFrame()
+                    
+                stock_code = parts[0]
+                market = parts[1]  # SH, SZ, or BJ
+                
+                # Use akshare to fetch historical data for Chinese A stocks
+                if market == 'SH':
+                    # Shanghai Stock Exchange
+                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                           start_date=start_date.strftime('%Y%m%d'), 
+                                           end_date=end_date.strftime('%Y%m%d'),
+                                           adjust="qfq")  # qfq means forward adjusted price
+                elif market == 'SZ':
+                    # Shenzhen Stock Exchange
+                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                                           start_date=start_date.strftime('%Y%m%d'), 
+                                           end_date=end_date.strftime('%Y%m%d'),
+                                           adjust="qfq")
+                elif market == 'BJ':
+                    # Beijing Stock Exchange
+                    df = ak.stock_zh_bj_a_hist(symbol=stock_code, period="daily", 
+                                              start_date=start_date.strftime('%Y%m%d'), 
+                                              end_date=end_date.strftime('%Y%m%d'),
+                                              adjust="qfq")
+                else:
+                    logger.error(f"Unsupported Chinese market: {market}")
+                    return pd.DataFrame()
+                
+                # Rename columns to match yfinance format
+                if not df.empty:
+                    df.rename(columns={'日期': 'Date', '开盘': 'Open', '收盘': 'Close', 
+                                      '最高': 'High', '最低': 'Low', '成交量': 'Volume'}, inplace=True)
+                    df.set_index('Date', inplace=True)
+                return df
+            except Exception as e:
+                logger.error(f"Error fetching Chinese A stock data for {symbol}: {e}")
+                return pd.DataFrame()
         
         try:
             # Fetch data directly from yfinance
@@ -227,115 +279,7 @@ class StockFilter:
             
             # Return empty DataFrame if all retries failed or it's not a rate limit error
             return pd.DataFrame()
-    
-    def _meets_criteria(self, indicators, time_frame, symbol):
-        """Check if indicators meet filtering criteria"""
-        if indicators.empty:
-            logger.warning("Empty indicators DataFrame, cannot apply filtering criteria")
-            return False
         
-        # Check if we have enough data points
-        if len(indicators) < 1:
-            logger.warning("Not enough data points in indicators DataFrame")
-            return False
-        
-        try:
-            # Get configuration for the specified time frame
-            ema_config = config['indicators']['ema'][time_frame]
-            bias_config = config['indicators']['bias'][time_frame]
-            rsi_config = config['indicators']['rsi'][time_frame]
-            macd_config = config['indicators']['macd'][time_frame]
-            # Add financial metrics thresholds with default values if not in config
-            financial_config = config.get('financial_metrics', {})
-            gross_margin_threshold = financial_config.get('gross_margin_threshold', 0.3)  # Default 30%
-            roe_threshold = financial_config.get('roe_threshold', 0.15)  # Default 15%
-            rd_ratio_threshold = financial_config.get('rd_ratio_threshold', 0.1)  # Default 10%
-            
-            # Find BIAS column - use the first EMA period from config
-            if 'periods' in ema_config and len(ema_config['periods']) > 0:
-                ema_period = ema_config['periods'][0]
-                bias_column = f"BIAS_{ema_period}_Close"
-                
-                # Check if the BIAS column exists in the indicators DataFrame
-                if bias_column not in indicators.columns:
-                    # Try alternative column names
-                    alternative_columns = [col for col in indicators.columns if col.startswith('BIAS_')]
-                    if alternative_columns:
-                        bias_column = alternative_columns[0]
-                    else:
-                        logger.warning(f"BIAS column '{bias_column}' not found in indicators")
-                        return False
-                
-                # Get BIAS value and threshold
-                bias_value = indicators[bias_column].iloc[-1]
-                bias_threshold = bias_config['threshold']
-                
-                # Check BIAS criteria - skip if NaN
-                if pd.isna(bias_value) or bias_value >= bias_threshold:
-                    return False
-                
-                # Check RSI criteria
-                rsi_period = rsi_config['period']
-                rsi_column = f"RSI_{rsi_period}"
-                
-                # Try alternative RSI column if the expected one doesn't exist
-                if rsi_column not in indicators.columns:
-                    alternative_columns = [col for col in indicators.columns if col.startswith('RSI_')]
-                    if alternative_columns:
-                        rsi_column = alternative_columns[0]
-                if rsi_column not in indicators.columns:
-                    logger.warning(f"RSI column '{rsi_column}' not found in indicators")
-                    return False
-                
-                rsi_value = indicators[rsi_column].iloc[-1]
-                rsi_oversold = rsi_config['oversold']
-                
-                if pd.isna(rsi_value) or rsi_value >= rsi_oversold:  # Skip if NaN
-                    return False
-                
-                # Check MACD criteria
-                if 'MACD' not in indicators.columns or 'MACD_Signal' not in indicators.columns:
-                    logger.warning("MACD or MACD_Signal column not found in indicators")
-                    return False
-                
-                macd_value = indicators['MACD'].iloc[-1]
-                macd_signal = indicators['MACD_Signal'].iloc[-1]
-                
-                if pd.isna(macd_value) or pd.isna(macd_signal) or macd_value >= macd_signal:  # Skip if NaN
-                    return False
-                
-                # Get stock for financial metrics
-                stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
-                if stock:
-                    # Check financial metrics if available
-                    # 毛利率 (Gross Profit Margin) check
-                    if stock.gross_margin is not None and stock.gross_margin < gross_margin_threshold:
-                        logger.info(f"Stock {stock.symbol} failed gross margin check: {stock.gross_margin} < {gross_margin_threshold}")
-                        return False
-                    
-                    # 净资产收益率 (Return on Equity) check
-                    if stock.roe is not None and stock.roe < roe_threshold:
-                        logger.info(f"Stock {stock.symbol} failed ROE check: {stock.roe} < {roe_threshold}")
-                        return False
-                    
-                    # 研发比率 (R&D Ratio) check - higher is better for tech companies
-                    if stock.sector == "Technology" and stock.rd_ratio is not None and stock.rd_ratio < rd_ratio_threshold:
-                        logger.info(f"Stock {stock.symbol} failed R&D ratio check: {stock.rd_ratio} < {rd_ratio_threshold}")
-                        return False
-                else:
-                    logger.warning(f"Stock not found in database for financial metrics check")
-                
-                # All criteria met
-                return True
-            else:
-                logger.warning(f"No EMA periods defined for {time_frame} timeframe")
-                return False
-        
-        except Exception as e:
-            import traceback
-            logger.error(f"Error in _meets_criteria: {e}")
-            return False
-    
     def _store_filtered_result(self, symbol, indicators, time_frame):
         """Store filtered result in database and Redis"""
         try:
@@ -405,8 +349,7 @@ class StockFilter:
                     rsi_value=rsi_value,
                     macd_value=macd_value,
                     macd_signal=macd_signal,
-                    macd_histogram=macd_histogram
-,
+                    macd_histogram=macd_histogram,
                     gross_margin=stock.gross_margin,
                     roe=stock.roe,
                     rd_ratio=stock.rd_ratio
@@ -542,31 +485,120 @@ class StockFilter:
                         
                         # Remove from time frames
                         for tf in time_frames:
-                            if tf in stock_data and "FinancialMetrics" in stock_data[tf]:
+                            if tf in stock_data and tf != "metaData" and tf != "FinancialMetrics" and "FinancialMetrics" in stock_data[tf]:
                                 del stock_data[tf]["FinancialMetrics"]
-                        
-                        # Update in Redis
-                        expiration = config["database"]["redis"]["expiration_days"] * 86400
-                        self.redis.set(key, json.dumps(stock_data), ex=expiration)
-                    else:
-                        # If not found, add empty financial metrics
-                        stock_data["FinancialMetrics"] = {}
                 
-                # Check if stock has all required time frames
-                has_all_time_frames = all(tf in stock_data for tf in time_frames)
+                # Check if any of the requested time frames exist
+                has_time_frame = False
+                for tf in time_frames:
+                    if tf in stock_data:
+                        has_time_frame = True
+                        break
                 
-                if has_all_time_frames:
-                    # Get symbol from key
-                    symbol = key.split("_")[-1]
-                    
-                    # Add to filtered stocks
-                    filtered_stocks[symbol] = {
-                        "metaData": stock_data["metaData"],
-                        "FinancialMetrics": stock_data.get("FinancialMetrics", {}),
-                        **{tf: stock_data[tf] for tf in time_frames}
-                    }
+                if has_time_frame:
+                    # Extract symbol from key
+                    symbol = key.decode('utf-8').replace('filtered_stock_', '')
+                    filtered_stocks[symbol] = stock_data
             
             except Exception as e:
-                logger.error(f"Error getting filtered stock {key}: {e}")
-        
+                logger.error(f"Error processing filtered stock data: {e}")
+                continue
+                
         return filtered_stocks
+
+    def _meets_criteria(self, indicators, time_frame, symbol):
+        """Check if stock meets filtering criteria"""
+        try:
+            # Get configuration for the specified time frame
+            ema_config = config['indicators']['ema'][time_frame]
+            rsi_config = config['indicators']['rsi'][time_frame]
+            macd_config = config['indicators']['macd'][time_frame]
+            
+            # Find BIAS column - use the first EMA period from config
+            bias_column = None
+            if 'periods' in ema_config and len(ema_config['periods']) > 0:
+                # Try to find any BIAS column if the expected one doesn't exist
+                bias_columns = [col for col in indicators.columns if col.startswith('BIAS_')]
+                if bias_columns:
+                    bias_column = bias_columns[0]
+                else:
+                    ema_period = ema_config['periods'][0]
+                    bias_column = f"BIAS_{ema_period}_Close"
+            
+            # Find RSI column
+            rsi_column = f"RSI_{rsi_config['period']}"
+            
+            # Check if required columns exist
+            if bias_column and bias_column not in indicators.columns:
+                logger.warning(f"BIAS column {bias_column} not found for {symbol}")
+                return False
+            
+            if rsi_column not in indicators.columns:
+                # Try to find any RSI column
+                rsi_columns = [col for col in indicators.columns if col.startswith('RSI_')]
+                if rsi_columns:
+                    rsi_column = rsi_columns[0]
+                else:
+                    logger.warning(f"RSI column not found for {symbol}")
+                    return False
+            
+            if 'MACD' not in indicators.columns or 'MACD_Signal' not in indicators.columns:
+                logger.warning(f"MACD columns not found for {symbol}")
+                return False
+            
+            # Get values
+            bias_value = indicators[bias_column].iloc[-1] if bias_column else None
+            rsi_value = indicators[rsi_column].iloc[-1]
+            macd_value = indicators['MACD'].iloc[-1]
+            macd_signal = indicators['MACD_Signal'].iloc[-1]
+            macd_histogram = indicators['MACD_Histogram'].iloc[-1] if 'MACD_Histogram' in indicators.columns else None
+            
+            # Check criteria
+            # 1. BIAS criteria
+            bias_criteria = False
+            if bias_value is not None:
+                bias_lower = ema_config.get('bias_lower', -10)
+                bias_upper = ema_config.get('bias_upper', 10)
+                bias_criteria = bias_lower <= bias_value <= bias_upper
+            
+            # 2. RSI criteria
+            rsi_lower = rsi_config.get('lower', 30)
+            rsi_upper = rsi_config.get('upper', 70)
+            rsi_criteria = rsi_lower <= rsi_value <= rsi_upper
+            
+            # 3. MACD criteria - check if MACD is about to cross above signal line
+            macd_criteria = False
+            if macd_histogram is not None:
+                # MACD histogram is positive and increasing
+                macd_criteria = macd_histogram > 0 and macd_value > macd_signal
+            else:
+                # Alternative: MACD is above signal line
+                macd_criteria = macd_value > macd_signal
+            
+            # Combine criteria based on configuration
+            # Default: All criteria must be met
+            criteria_mode = config.get('filtering', {}).get('criteria_mode', 'all')
+            
+            if criteria_mode == 'all':
+                # All criteria must be met
+                meets_criteria = (not bias_column or bias_criteria) and rsi_criteria and macd_criteria
+            elif criteria_mode == 'any':
+                # Any criteria can be met
+                meets_criteria = (bias_column and bias_criteria) or rsi_criteria or macd_criteria
+            elif criteria_mode == 'majority':
+                # Majority of criteria must be met (at least 2 out of 3)
+                criteria_count = sum([
+                    1 if bias_column and bias_criteria else 0,
+                    1 if rsi_criteria else 0,
+                    1 if macd_criteria else 0
+                ])
+                meets_criteria = criteria_count >= 2
+            else:
+                # Default to all
+                meets_criteria = (not bias_column or bias_criteria) and rsi_criteria and macd_criteria
+            
+            return meets_criteria
+        
+        except Exception as e:
+            logger.error(f"Error checking criteria for {symbol}: {e}")
+            return False

@@ -5,6 +5,7 @@ import os
 import json
 import logging
 import time
+import re
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
 import yaml
@@ -75,7 +76,7 @@ class DataAcquisition:
                         symbols = ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "BRK-B", "UNH", "JNJ"]
                         logger.warning(f"Using fallback list of {len(symbols)} S&P 500 components")
                 
-                elif exch in ["NASDAQ", "NYSE", "AMEX"]:
+                elif exch in ["NASDAQ", "NYSE", "AMEX", "ACN"]:
                     # Read symbols from CSV files in config directory
                     try:
                         # Construct the CSV file path
@@ -113,6 +114,8 @@ class DataAcquisition:
                             symbols = ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC"]
                         elif exch == "AMEX":
                             symbols = ["SPY", "GLD", "XLF", "EEM", "XLE", "VXX", "EFA", "XLV", "IWM", "QQQ"]
+                        elif exch == "ACN":
+                            symbols = ["300281.SZ", "600061.SH", "836239.BJ", "302132.SZ", "830809.BJ"]
                         logger.warning(f"Using fallback list of {len(symbols)} {exch} components")
                 
                 # Store symbols in Redis
@@ -151,22 +154,31 @@ class DataAcquisition:
                     if '^' in symbol:
                         logger.info(f"Skipping index symbol: {symbol}")
                         continue
-                        
-                    # Get stock info from yfinance
-                    ticker = yf.Ticker(symbol)
-                    info = ticker.info
                     
-                    # Store in database
-                    self._store_stock_info(
-                        symbol=symbol,
-                        name=info.get('shortName', None),
-                        exchange=exchange,
-                        sector=info.get('sector', None),
-                        industry=info.get('industry', None),
-                        gross_margin=info.get('grossMargins', None),
-                        roe=info.get('returnOnEquity', None),
-                        rd_ratio=info.get('researchAndDevelopmentToRevenue', None)
-                    )
+                    # Check if it's a Chinese A stock (pattern: number.SH or number.SZ)
+                    chinese_stock_pattern = r'^\d+\.(SH|SZ|BJ)$'
+                    is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
+                    
+                    if is_chinese_a_stock:
+                        # Handle Chinese A stocks differently
+                        logger.info(f"Processing Chinese A stock: {symbol}")
+                        self._process_chinese_a_stock(symbol, exchange)
+                    else:
+                        # Get stock info from yfinance for non-Chinese stocks
+                        ticker = yf.Ticker(symbol)
+                        info = ticker.info
+                        
+                        # Store in database
+                        self._store_stock_info(
+                            symbol=symbol,
+                            name=info.get('shortName', None),
+                            exchange=exchange,
+                            sector=info.get('sector', None),
+                            industry=info.get('industry', None),
+                            gross_margin=info.get('grossMargins', None),
+                            roe=info.get('returnOnEquity', None),
+                            rd_ratio=info.get('researchAndDevelopmentToRevenue', None)
+                        )
                 except Exception as e:
                     logger.warning(f"Error getting info for {symbol}: {e}")
                     # Still store basic info
@@ -185,6 +197,117 @@ class DataAcquisition:
             
             # Sleep to avoid rate limiting
             time.sleep(4)
+    
+    def _process_chinese_a_stock(self, symbol, exchange=None):
+        """Process Chinese A stock information using alternative methods"""
+        try:
+            # Extract stock code and market
+            parts = symbol.split('.')
+            if len(parts) != 2:
+                logger.warning(f"Invalid Chinese A stock symbol format: {symbol}")
+                return
+                
+            stock_code = parts[0]
+            market = parts[1]  # SH, SZ, or BJ
+            
+            # Determine exchange name based on market code
+            if market == 'SH':
+                exchange_name = 'Shanghai Stock Exchange'
+                sector_code = 'SSE'
+            elif market == 'SZ':
+                exchange_name = 'Shenzhen Stock Exchange'
+                sector_code = 'SZSE'
+            elif market == 'BJ':
+                exchange_name = 'Beijing Stock Exchange'
+                sector_code = 'BSE'
+            else:
+                exchange_name = None
+                sector_code = None
+            
+            # Try to get basic information using requests to a public API
+            try:
+                # Method 1: Try to use a free API to get stock information
+                # This is a fallback method that doesn't require additional libraries
+                url = f"http://hq.sinajs.cn/list={market.lower()}{stock_code}"
+                headers = {
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    # Parse the response which is in the format: var hq_str_sh600000="STOCK NAME,..."
+                    content = response.text
+                    if 'hq_str_' in content and '=' in content and '"' in content:
+                        data_str = content.split('=')[1].strip('";\n')
+                        data_parts = data_str.split(',')
+                        
+                        if len(data_parts) > 0:
+                            stock_name = data_parts[0]
+                            
+                            # Store the information
+                            self._store_stock_info(
+                                symbol=symbol,
+                                name=stock_name,
+                                exchange=exchange_name,
+                                sector=f"Chinese {sector_code}",
+                                industry=None,
+                                gross_margin=None,
+                                roe=None,
+                                rd_ratio=None
+                            )
+                            logger.info(f"Successfully retrieved basic info for Chinese A stock: {symbol}")
+                            return
+            except Exception as e:
+                logger.warning(f"Error using Sina API for {symbol}: {e}")
+            
+            # Method 2: If the first method fails, try another approach
+            try:
+                # Use a different API or method
+                # For example, we could use a different endpoint or service
+                # This is just a placeholder for an alternative method
+                
+                # For now, we'll just store basic information based on the symbol
+                self._store_stock_info(
+                    symbol=symbol,
+                    name=f"A Stock {stock_code}",
+                    exchange=exchange_name,
+                    sector=f"Chinese {sector_code}",
+                    industry=None,
+                    gross_margin=None,
+                    roe=None,
+                    rd_ratio=None
+                )
+                logger.info(f"Stored basic info for Chinese A stock: {symbol}")
+                return
+            except Exception as e:
+                logger.warning(f"Error using alternative method for {symbol}: {e}")
+            
+            # If all methods fail, store minimal information
+            self._store_stock_info(
+                symbol=symbol,
+                name=None,
+                exchange=exchange_name,
+                sector=None,
+                industry=None,
+                gross_margin=None,
+                roe=None,
+                rd_ratio=None
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing Chinese A stock {symbol}: {e}")
+            # Store minimal information
+            self._store_stock_info(
+                symbol=symbol,
+                name=None,
+                exchange=exchange,
+                sector=None,
+                industry=None,
+                gross_margin=None,
+                roe=None,
+                rd_ratio=None
+            )
     
     def _store_stock_info(self, symbol, name=None, exchange=None, sector=None, industry=None, gross_margin=None, roe=None, rd_ratio=None):
         """Store stock information in database"""
