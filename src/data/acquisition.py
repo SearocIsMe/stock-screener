@@ -14,6 +14,7 @@ import requests
 import yfinance as yf
 import pandas as pd
 import pandas_datareader as pdr
+import akshare as ak
 import pandas_datareader.data as web
 from sqlalchemy.orm import Session
 from .database import get_redis
@@ -94,12 +95,12 @@ class DataAcquisition:
                             
                             # Extract symbols column
                             if 'Symbol' in df.columns:
-                                symbols = df['Symbol'].tolist()
+                                symbols = df['Symbol'].astype(str).tolist()
                             elif 'symbol' in df.columns:
-                                symbols = df['symbol'].tolist()
+                                symbols = df['symbol'].astype(str).tolist()
                             else:
                                 # Try to use the first column
-                                symbols = df.iloc[:, 0].tolist()
+                                symbols = df.iloc[:, 0].astype(str).tolist()
                                 
                             logger.info(f"Retrieved {len(symbols)} {exch} symbols from CSV file")
                         else:
@@ -156,7 +157,7 @@ class DataAcquisition:
                         continue
                     
                     # Check if it's a Chinese A stock (pattern: number.SH or number.SZ)
-                    chinese_stock_pattern = r'^\d+\.(SH|SZ|BJ)$'
+                    chinese_stock_pattern = r'^\d'
                     is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
                     
                     if is_chinese_a_stock:
@@ -201,28 +202,52 @@ class DataAcquisition:
     def _process_chinese_a_stock(self, symbol, exchange=None):
         """Process Chinese A stock information using alternative methods"""
         try:
-            # Extract stock code and market
-            parts = symbol.split('.')
-            if len(parts) != 2:
-                logger.warning(f"Invalid Chinese A stock symbol format: {symbol}")
-                return
-                
-            stock_code = parts[0]
-            market = parts[1]  # SH, SZ, or BJ
+            stock_code = symbol
             
-            # Determine exchange name based on market code
-            if market == 'SH':
-                exchange_name = 'Shanghai Stock Exchange'
-                sector_code = 'SSE'
-            elif market == 'SZ':
-                exchange_name = 'Shenzhen Stock Exchange'
-                sector_code = 'SZSE'
-            elif market == 'BJ':
-                exchange_name = 'Beijing Stock Exchange'
-                sector_code = 'BSE'
-            else:
-                exchange_name = None
-                sector_code = None
+            # Calculate date range
+            chinese_stock_pattern = r'^\d'
+            
+            # Check if it's a Chinese A stock
+            is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
+
+            # Use akshare to fetch historical data for Chinese A stocks
+            try:
+                logger.info(f"Fetching historical data for Chinese A stock: {symbol} using akshare")
+                # Calculate date range for historical data
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=365)  # 1 year of daily data
+                
+                # Use akshare to fetch historical data
+                df = ak.stock_zh_a_hist(
+                    symbol=stock_code, 
+                    period="daily",
+                    start_date=start_date.strftime('%Y%m%d'), 
+                    end_date=end_date.strftime('%Y%m%d'),
+                    adjust="qfq"  # qfq means forward adjusted price
+                )
+                
+                # Rename columns to match yfinance format if needed
+                if not df.empty:
+                    # Get stock name from the data if available
+                    stock_name = None
+                    if 'name' in df.columns:
+                        stock_name = df['name'].iloc[0]
+                    
+                    # Store the stock information
+                    self._store_stock_info(
+                        symbol=symbol,
+                        name=stock_name,
+                        exchange="ACN",
+                        sector=f"Chinese A Stock",
+                        industry=None,
+                        gross_margin=None,
+                        roe=None,
+                        rd_ratio=None
+                    )
+                    logger.info(f"Successfully retrieved info for Chinese A stock: {symbol} using akshare")
+                    return
+            except Exception as e:
+                logger.warning(f"Error using akshare for {symbol}: {e}")
             
             # Try to get basic information using requests to a public API
             try:
@@ -249,8 +274,8 @@ class DataAcquisition:
                             self._store_stock_info(
                                 symbol=symbol,
                                 name=stock_name,
-                                exchange=exchange_name,
-                                sector=f"Chinese {sector_code}",
+                                exchange="ACN",
+                                sector=f"Chinese A Stock",
                                 industry=None,
                                 gross_margin=None,
                                 roe=None,
@@ -271,7 +296,7 @@ class DataAcquisition:
                 self._store_stock_info(
                     symbol=symbol,
                     name=f"A Stock {stock_code}",
-                    exchange=exchange_name,
+                    exchange="ACN",
                     sector=f"Chinese {sector_code}",
                     industry=None,
                     gross_margin=None,
@@ -287,7 +312,7 @@ class DataAcquisition:
             self._store_stock_info(
                 symbol=symbol,
                 name=None,
-                exchange=exchange_name,
+                exchange="ACN",
                 sector=None,
                 industry=None,
                 gross_margin=None,
