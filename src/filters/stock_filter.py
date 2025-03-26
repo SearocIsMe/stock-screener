@@ -193,28 +193,38 @@ class StockFilter:
                 market = parts[1]  # SH, SZ, or BJ
                 
                 # Use akshare to fetch historical data for Chinese A stocks
-                if market == 'SH':
+                if market.upper() == 'SH':
                     # Shanghai Stock Exchange
-                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily",  # Using only the stock code without market suffix
                                            start_date=start_date.strftime('%Y%m%d'), 
                                            end_date=end_date.strftime('%Y%m%d'),
                                            adjust="qfq")  # qfq means forward adjusted price
-                elif market == 'SZ':
+                elif market.upper() == 'SZ':
                     # Shenzhen Stock Exchange
-                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", 
+                    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily",  # Using only the stock code without market suffix
                                            start_date=start_date.strftime('%Y%m%d'), 
                                            end_date=end_date.strftime('%Y%m%d'),
                                            adjust="qfq")
-                elif market == 'BJ':
+                elif market.upper() == 'BJ':
                     # Beijing Stock Exchange
-                    df = ak.stock_zh_bj_a_hist(symbol=stock_code, period="daily", 
-                                              start_date=start_date.strftime('%Y%m%d'), 
+                    try:
+                        # First try with stock_zh_bj_a_hist
+                        df = ak.stock_zh_bj_a_hist(symbol=stock_code, period="daily",  # Using only the stock code without market suffix
+                                                 start_date=start_date.strftime('%Y%m%d'), 
+                                                 end_date=end_date.strftime('%Y%m%d'),
+                                                 adjust="qfq")  # qfq means forward adjusted price
+                    except (AttributeError, Exception) as e:
+                        logger.warning(f"Error using stock_zh_bj_a_hist for {symbol}: {e}")
+                        logger.info(f"Trying alternative method stock_xsb_hist for {symbol}")
+                        # Fall back to stock_xsb_hist for Beijing stocks
+                        df = ak.stock_xsb_hist(symbol=stock_code, period="daily",
+                                              start_date=start_date.strftime('%Y%m%d'),
                                               end_date=end_date.strftime('%Y%m%d'),
                                               adjust="qfq")
                 else:
                     logger.error(f"Unsupported Chinese market: {market}")
                     return pd.DataFrame()
-                
+                time.sleep(1)
                 # Rename columns to match yfinance format
                 if not df.empty:
                     df.rename(columns={'日期': 'Date', '开盘': 'Open', '收盘': 'Close', 
