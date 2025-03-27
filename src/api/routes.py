@@ -192,25 +192,20 @@ def _process_filter_stocks(request_data: Dict[str, Any], db: Session) -> Dict[st
         # Initialize stock filter
         stock_filter = StockFilter(db)
         
-        # Apply custom financial filters if provided
-        custom_financial_filters = {}
-        if request.financialFilters:
-            custom_financial_filters = request.financialFilters
-            logger.info(f"Using custom financial filters: {custom_financial_filters}")
-            
-            # Update config with custom thresholds
-            import yaml
-            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "config.yaml"), "r") as config_file:
-                config = yaml.safe_load(config_file)
-            
-            for key, value in custom_financial_filters.items():
-                if key in config.get('financial_metrics', {}):
-                    config['financial_metrics'][key] = value
+        # Get custom financial filters if provided
+        custom_financial_thresholds = None
+        if request.financialFilters and len(request.financialFilters) > 0:
+            custom_financial_thresholds = request.financialFilters
+            logger.info(f"Using custom financial filters: {custom_financial_thresholds}")
+        else:
+            logger.info("No custom financial filters provided, using defaults from config")
         
         # Filter stocks
         filtered_stocks = stock_filter.filter_stocks(
             symbols=request.symbols,
             time_frames=request.timeFrame
+,
+            custom_financial_thresholds=custom_financial_thresholds
         )
         
         return {"filtered_stocks": filtered_stocks}

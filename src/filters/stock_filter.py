@@ -36,8 +36,9 @@ class StockFilter:
         self.db = db
         self.redis = get_redis()
         self.data_acquisition = DataAcquisition(db)
+        self.custom_financial_thresholds = None
     
-    def filter_stocks(self, symbols=None, time_frames=None):
+    def filter_stocks(self, symbols=None, time_frames=None, custom_financial_thresholds=None):
         """
         Filter stocks based on technical indicators
         
@@ -48,6 +49,10 @@ class StockFilter:
         Returns:
             Dictionary of filtered stocks by symbol
         """
+        # Set custom financial thresholds if provided
+        if custom_financial_thresholds:
+            self.set_custom_financial_thresholds(custom_financial_thresholds)
+        
         # Set default values
         if not symbols:
             symbols = "all"
@@ -106,7 +111,7 @@ class StockFilter:
                 for time_frame in time_frames:
                     # Get historical data
                     # Ensure we're using the correct timeframe data
-                    historical_data = self._get_historical_data(symbol, time_frame, days=60)
+                    historical_data = self._get_historical_data(symbol, time_frame, days=90)
                     
                     if historical_data.empty:
                         logger.warning(f"No historical data for {symbol} ({time_frame})")
@@ -117,7 +122,7 @@ class StockFilter:
                     latest_indicators = TechnicalIndicators.get_latest_indicators(indicators_df, time_frame)
                     
                     # Apply filtering criteria
-                    if self._meets_criteria(latest_indicators, time_frame, symbol):
+                    if self._meets_criteria(latest_indicators, time_frame, symbol, stock=self.db.query(Stock).filter(Stock.symbol == symbol).first()):
                         # Store filtered result
                         result = self._store_filtered_result(symbol, latest_indicators, time_frame)
                         
@@ -143,11 +148,7 @@ class StockFilter:
                             "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
                             "roe": float(stock.roe) if stock.roe is not None else None,
                             "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
-                            "thresholds": {
-                                "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
-                                "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
-                                "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
-                            }
+                            "thresholds": self._get_financial_thresholds()
                         }
             
             except Exception as e:
@@ -155,7 +156,29 @@ class StockFilter:
         
         return filtered_results
 
-    def _get_historical_data(self, symbol, time_frame, days=100):
+    def _get_financial_thresholds(self):
+        """Get financial thresholds from custom thresholds or config"""
+        if self.custom_financial_thresholds:
+            return {
+                "gross_margin": float(self.custom_financial_thresholds.get('gross_margin_threshold', 
+                                    config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3))),
+                "roe": float(self.custom_financial_thresholds.get('roe_threshold', 
+                           config.get('financial_metrics', {}).get('roe_threshold', 0.05))),
+                "rd_ratio": float(self.custom_financial_thresholds.get('rd_ratio_threshold', 
+                                config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7)))
+            }
+        else:
+            return {
+                "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.05)),
+                "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7))
+            }
+    
+    def set_custom_financial_thresholds(self, thresholds):
+        """Set custom financial thresholds"""
+        self.custom_financial_thresholds = thresholds
+        logger.info(f"Set custom financial thresholds: {thresholds}")
+    def _get_historical_data(self, symbol, time_frame, days=120):
         """Get historical data for a symbol directly from yfinance"""
         # Calculate date range
         chinese_stock_pattern = r'^\d'
@@ -168,10 +191,10 @@ class StockFilter:
             start_date = end_date - timedelta(days=days)
             interval = "1d"  # Daily data
         elif time_frame == "weekly":
-            start_date = end_date - timedelta(days=days * 2)  # Fetch more data for weekly
+            start_date = end_date - timedelta(days=days * 4)  # Fetch more data for weekly
             interval = "1wk"
         elif time_frame == "monthly":
-            start_date = end_date - timedelta(days=days * 4)  # Fetch more data for monthly
+            start_date = end_date - timedelta(days=days * 12)  # Fetch more data for monthly
             interval = "1mo"
         else:
             logger.error(f"Invalid time frame: {time_frame}")
@@ -368,7 +391,7 @@ class StockFilter:
                         "thresholds": {
                             "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
                             "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
-                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
+                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7))
                         }
                     }
                     
@@ -386,11 +409,7 @@ class StockFilter:
                         "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
                         "roe": float(stock.roe) if stock.roe is not None else None,
                         "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
-                        "thresholds": {
-                            "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
-                            "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
-                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.1))
-                        }
+                        "thresholds": self._get_financial_thresholds()
                     }
                 }
             
@@ -498,7 +517,7 @@ class StockFilter:
                 
         return filtered_stocks
 
-    def _meets_criteria(self, indicators, time_frame, symbol):
+    def _meets_criteria(self, indicators, time_frame, symbol, stock=None):
         """Check if stock meets filtering criteria"""
         try:
             # Get configuration for the specified time frame
@@ -566,7 +585,7 @@ class StockFilter:
             else:
                 # Alternative: MACD is above signal line
                 macd_criteria = macd_value > macd_signal
-            
+
             # Combine criteria based on configuration
             # Default: All criteria must be met
             criteria_mode = config.get('filtering', {}).get('criteria_mode', 'all')
@@ -588,7 +607,35 @@ class StockFilter:
             else:
                 # Default to all
                 meets_criteria = (not bias_column or bias_criteria) and rsi_criteria and macd_criteria
-            
+
+            # Check financial metrics if stock is provided and financial filtering is enabled
+            if stock and config.get('financial_metrics', {}).get('enable_financial_filtering', True):
+                # Get financial thresholds
+                thresholds = self._get_financial_thresholds()
+                
+                # Check gross margin
+                gross_margin_criteria = True
+                if stock.gross_margin is not None and thresholds["gross_margin"] is not None:
+                    gross_margin_criteria = float(stock.gross_margin) >= thresholds["gross_margin"]
+                
+                # Check ROE
+                roe_criteria = True
+                if stock.roe is not None and thresholds["roe"] is not None:
+                    roe_criteria = float(stock.roe) >= thresholds["roe"]
+                
+                # Check R&D ratio
+                rd_ratio_criteria = True
+                if stock.rd_ratio is not None and thresholds["rd_ratio"] is not None:
+                    rd_ratio_criteria = float(stock.rd_ratio) >= thresholds["rd_ratio"]
+                
+                # Combine financial criteria
+                financial_criteria = gross_margin_criteria and roe_criteria and rd_ratio_criteria
+                
+                # Combine with technical criteria
+                meets_criteria = meets_criteria and financial_criteria
+                
+                logger.debug(f"Financial criteria for {symbol}: gross_margin={gross_margin_criteria}, roe={roe_criteria}, rd_ratio={rd_ratio_criteria}")
+                
             return meets_criteria
         
         except Exception as e:

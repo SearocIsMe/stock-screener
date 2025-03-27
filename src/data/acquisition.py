@@ -195,9 +195,6 @@ class DataAcquisition:
                     )
                     # Sleep to avoid rate limiting
                     time.sleep(5)
-            
-            # Sleep to avoid rate limiting
-            time.sleep(4)
     
     def _process_chinese_a_stock(self, symbol, exchange=None):
         """Process Chinese A stock information using alternative methods"""
