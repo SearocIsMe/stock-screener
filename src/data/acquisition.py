@@ -167,7 +167,16 @@ class DataAcquisition:
                     else:
                         # Get stock info from yfinance for non-Chinese stocks
                         ticker = yf.Ticker(symbol)
+
+                        if not ticker:
+                            logger.warning(f"[ERROR] No ticker data found for {symbol}")
+                            continue
+
                         info = ticker.info
+                        if not info:
+                            logger.warning(f"[ERROR] No info data found for {symbol}")
+                            continue
+
                         
                         # Store in database
                         self._store_stock_info(

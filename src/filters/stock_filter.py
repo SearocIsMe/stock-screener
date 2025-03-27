@@ -568,9 +568,9 @@ class StockFilter:
             # 1. BIAS criteria
             bias_criteria = False
             if bias_value is not None:
-                bias_lower = ema_config.get('bias_lower', -10)
-                bias_upper = ema_config.get('bias_upper', 10)
-                bias_criteria = bias_lower <= bias_value <= bias_upper
+                # Get BIAS threshold from config - filter stocks with BIAS below this threshold
+                bias_threshold = config['indicators']['bias'][time_frame]['threshold']
+                bias_criteria = bias_value <= bias_threshold
             
             # 2. RSI criteria
             rsi_lower = rsi_config.get('lower', 30)
