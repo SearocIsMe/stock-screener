@@ -24,6 +24,94 @@ class TechnicalIndicators:
 
     def __init__(self):
         self.calucated_amount = 1
+        
+    @staticmethod
+    def calculate_ema_slope(data, ema_period=13, window=3):
+        """
+        Calculate the slope of the EMA over a specified window
+        
+        Args:
+            data: DataFrame with price data and EMA values
+            ema_period: EMA period to use for slope calculation
+            window: Number of periods to use for slope calculation
+            
+        Returns:
+            DataFrame with EMA slope values in degrees
+        """
+        if data.empty or len(data) < window:
+            return pd.DataFrame()
+            
+        # Ensure the EMA column exists
+        ema_col = f'EMA_{ema_period}_Close'
+        if ema_col not in data.columns:
+            return pd.DataFrame()
+            
+        # Create a copy of the data
+        df = data.copy()
+        
+        # Calculate the slope using numpy's polyfit
+        # This calculates the slope of the line of best fit through the EMA values
+        df[f'EMA_{ema_period}_Slope'] = np.nan
+        
+        # Use rolling window to calculate slope for each point
+        for i in range(window - 1, len(df)):
+            # Get the window of EMA values
+            y = df[ema_col].iloc[i-(window-1):i+1].values
+            x = np.arange(window)
+            
+            # Calculate the slope using polyfit
+            slope, _ = np.polyfit(x, y, 1)
+            
+            # Convert slope to degrees (arctan of slope in radians, then convert to degrees)
+            slope_degrees = np.degrees(np.arctan(slope))
+            
+            # Store the slope in degrees
+            df[f'EMA_{ema_period}_Slope'].iloc[i] = slope_degrees
+            
+        return df
+        
+    @staticmethod
+    def check_uptrend_duration(data, ema_period=13, min_slope=10, min_weeks=3):
+        """
+        Check if the EMA slope has been upward for a minimum number of consecutive periods
+        
+        Args:
+            data: DataFrame with EMA slope values
+            ema_period: EMA period used for slope calculation
+            min_slope: Minimum slope in degrees to consider as upward
+            min_weeks: Minimum number of consecutive periods with upward slope
+            
+        Returns:
+            Tuple of (is_uptrend, duration)
+        """
+        if data.empty:
+            return False, 0
+            
+        slope_col = f'EMA_{ema_period}_Slope'
+        if slope_col not in data.columns:
+            return False, 0
+            
+        # Get the most recent slope values
+        recent_slopes = data[slope_col].dropna().tail(min_weeks * 2)  # Get more than we need
+        
+        if len(recent_slopes) < min_weeks:
+            return False, 0
+            
+        # Count consecutive periods with upward slope
+        consecutive_count = 0
+        max_consecutive = 0
+        
+        for slope in recent_slopes:
+            if slope > min_slope:  # Upward slope
+                consecutive_count += 1
+                max_consecutive = max(max_consecutive, consecutive_count)
+            else:
+                consecutive_count = 0
+                
+        # Check if we have enough consecutive periods
+        is_uptrend = max_consecutive >= min_weeks
+        
+        return is_uptrend, max_consecutive
     
     @classmethod
     def calculate_all_indicators(cls, data, time_frame='daily'):
@@ -93,7 +181,6 @@ class TechnicalIndicators:
             cls.calucated_amount += 1
         
         return df
-    
     @classmethod
     def get_latest_indicators(cls, data, time_frame='daily'):
         """
@@ -111,4 +198,35 @@ class TechnicalIndicators:
             return pd.DataFrame()
         
         # Return only the last row (most recent indicators)
+        return data.iloc[-1:].copy()
+        
+    @classmethod
+    def calculate_trend_indicators(cls, data, time_frame='weekly', ema_period=13, min_slope=10, min_weeks=3):
+        """
+        Calculate trend indicators including EMA slope and uptrend duration
+        
+        Args:
+            data: DataFrame with price data
+            time_frame: Time frame for indicators (daily, weekly, monthly)
+            ema_period: EMA period to use for slope calculation
+            min_slope: Minimum slope in degrees to consider as upward
+            min_weeks: Minimum number of consecutive periods with upward slope
+            
+        Returns:
+            Tuple of (DataFrame with trend indicators, is_uptrend, uptrend_duration)
+        """
+        if data.empty or len(data) < min_weeks:
+            logger.warning(f"Not enough data points for trend analysis ({len(data)} < {min_weeks})")
+            return pd.DataFrame(), False, 0
+            
+        # Calculate all indicators first
+        df = cls.calculate_all_indicators(data, time_frame)
+        
+        # Calculate EMA slope
+        df = cls.calculate_ema_slope(df, ema_period, window=min_weeks)
+        
+        # Check uptrend duration
+        is_uptrend, duration = cls.check_uptrend_duration(df, ema_period, min_slope, min_weeks)
+        
+        return df, is_uptrend, duration
         return data.iloc[-1:].copy()

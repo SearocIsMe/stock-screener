@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from src.data.database import get_db
 from src.data.acquisition import DataAcquisition
 from src.filters.stock_filter import StockFilter
+from src.filters.trend_strategy import TrendStrategy
 from src.utils.async_job import AsyncJob
 
 # Configure logging
@@ -121,6 +122,37 @@ class PerformanceRetreatResponse(BaseModel):
 class PerformanceRetreatApiResponse(ApiResponse):
     """Performance retreat API response model"""
     data: Optional[PerformanceRetreatResponse] = None
+
+class TrendAnalysisRequest(BaseModel):
+    """Trend analysis request model"""
+    symbols: List[str] = Field(..., description="List of stock symbols, exchange names, or 'all' for all symbols")
+    custom_thresholds: Optional[Dict[str, float]] = Field(
+        None,
+        description="Custom thresholds for fundamental criteria",
+        example={
+            "pb_ratio_max": 10.0,  # P/B < 10
+            "pe_ratio_min": 10.0,  # P/E > 10
+            "roe_min": 0.10,       # ROE > 10%
+            "gross_margin_min": 0.30,  # Gross Margin > 30%
+            "dividend_yield_min": 0.03,  # Dividend Yield > 3%
+            "ema_slope_min": 10.0,  # EMA slope > 10 degrees
+            "ema_slope_weeks": 3,   # For at least 3 consecutive weeks
+            "ema_period": 13        # 13-week EMA
+        }
+    )
+
+class TrendAnalysisResponse(BaseModel):
+    """Trend analysis response model"""
+    stock: Dict[str, str]
+    trend_status: Optional[Dict[str, Any]] = None
+    fundamentals: Optional[Dict[str, Any]] = None
+    verdict: Optional[Dict[str, str]] = None
+    analysis_time: str
+    error: Optional[str] = None
+
+class TrendAnalysisApiResponse(ApiResponse):
+    """Trend analysis API response model"""
+    data: Optional[Dict[str, TrendAnalysisResponse]] = None
 
 @router.post("/trigger_fetch_filtering", response_model=JobResponse)
 async def trigger_fetch_filtering(
@@ -766,4 +798,143 @@ async def get_retreat(
         raise HTTPException(
             status_code=500,
             detail=f"Error retrieving performance retreat results: {str(e)}"
+        )
+
+@router.post("/analyze_trend_strategy", response_model=TrendAnalysisApiResponse)
+async def analyze_trend_strategy(
+    request: TrendAnalysisRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze stocks based on the trend strategy criteria
+    
+    This endpoint will:
+    1. Analyze each stock based on technical conditions:
+       - Weekly EMA(13) slope must be upward (>10 degrees) for at least 3 consecutive weeks
+       - Daily BIAS must be less than the threshold
+    2. Screen stocks based on fundamental conditions:
+       - P/B < 10 and not negative
+       - P/E > 10
+       - ROE > 10%
+       - Gross Margin > 30%
+       - Dividend Yield > 3%
+    3. Provide a verdict (Buy/Sell/Reject)
+    
+    Args:
+        request: Request with symbols and custom thresholds
+        db: Database session
+    
+    Returns:
+        API response with analysis results
+    """
+    try:
+        # Create job
+        job_id = AsyncJob.create_job("trend_analysis", request.dict())
+        
+        # Run async job
+        AsyncJob.run_async(
+            "trend_analysis", job_id,
+            _process_trend_analysis, request.dict(), db
+        )
+        
+        return TrendAnalysisApiResponse(
+            success=True,
+            message=f"Trend analysis job started successfully with ID: {job_id}",
+            data=None
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in analyze_trend_strategy: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error starting trend analysis job: {str(e)}"
+        )
+
+def _process_trend_analysis(request_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    """
+    Process trend analysis request
+    
+    Args:
+        request_data: Request data
+        db: Database session
+        
+    Returns:
+        Analysis results
+    """
+    try:
+        # Convert request data to request object
+        request = TrendAnalysisRequest(**request_data)
+        
+        # Initialize trend strategy
+        trend_strategy = TrendStrategy(db)
+        
+        # Analyze stocks
+        try:
+            results = trend_strategy.analyze_stocks(request.symbols, request.custom_thresholds)
+            return {"analysis_results": results}
+        except Exception as e:
+            logger.error(f"Error analyzing stocks: {e}")
+            raise Exception(f"Error analyzing stocks: {str(e)}")
+    
+    except Exception as e:
+        logger.error(f"Error in _process_trend_analysis: {e}")
+        raise Exception(
+            f"Error analyzing stocks: {str(e)}"
+        )
+
+@router.get("/get_trend_analysis/{job_id}", response_model=TrendAnalysisApiResponse)
+async def get_trend_analysis(
+    job_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get trend analysis results
+    
+    Args:
+        job_id: Job ID from analyze_trend_strategy
+        db: Database session
+    
+    Returns:
+        API response with analysis results
+    """
+    try:
+        # Get job status
+        job_data = AsyncJob.get_job_status("trend_analysis", job_id)
+        
+        # Check if job exists
+        if not job_data:
+            return TrendAnalysisApiResponse(
+                success=False,
+                message=f"Job with ID {job_id} not found",
+                data=None
+            )
+        
+        # Check job status
+        if job_data["status"] == "processing":
+            return TrendAnalysisApiResponse(
+                success=False,
+                message=f"The system is processing the request for your input: {json.dumps(job_data['request'], indent=2)}",
+                data=None
+            )
+        elif job_data["status"] == "error":
+            return TrendAnalysisApiResponse(
+                success=False,
+                message=f"Error processing job: {job_data.get('result', {}).get('error', 'Unknown error')}",
+                data=None
+            )
+        elif job_data["status"] == "done":
+            # Get analysis results from job result
+            analysis_results = job_data["result"]["analysis_results"]
+            
+            return TrendAnalysisApiResponse(
+                success=True,
+                message=f"Successfully retrieved trend analysis results for {len(analysis_results)} stocks",
+                data=analysis_results
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in get_trend_analysis: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving trend analysis results: {str(e)}"
         )

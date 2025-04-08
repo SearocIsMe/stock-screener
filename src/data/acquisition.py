@@ -392,7 +392,7 @@ class DataAcquisition:
             logger.error(f"Error storing stock info for {symbol}: {e}")
             return None
     
-    def fetch_stock_history(self, symbols, start_date=None, end_date=None, time_frame="daily"):
+    def fetch_stock_history(self, symbols, start_date=None, end_date=None, time_frame="daily", days=None):
         """
         Fetch historical stock data for specified symbols
         
@@ -401,6 +401,7 @@ class DataAcquisition:
             start_date: Start date for historical data (default: 1 year ago)
             end_date: End date for historical data (default: today)
             time_frame: Time frame for data (daily, weekly, monthly)
+            days: Number of days of historical data to fetch (overrides start_date if provided)
         
         Returns:
             Dictionary of stock data by symbol
@@ -411,7 +412,11 @@ class DataAcquisition:
         elif isinstance(end_date, str):
             end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         
-        if not start_date:
+        # If days parameter is provided, calculate start_date based on days
+        if days is not None:
+            start_date = end_date - timedelta(days=days)
+        elif not start_date:
+            # Default time ranges if neither start_date nor days is provided
             if time_frame == "daily":
                 start_date = end_date - timedelta(days=365)  # 1 year of daily data
             elif time_frame == "weekly":
@@ -525,10 +530,31 @@ class DataAcquisition:
                             price_data[db_col] = row[col]
                             break
                 
-                # Skip if we couldn't find all required columns
-                if len(price_data) < 5:
-                    logger.warning(f"Skipping row for {symbol} at {date}: missing required columns")
-                    continue
+                # Check for essential columns (open, high, low, close)
+                essential_columns = ['open', 'high', 'low', 'close']
+                missing_essential = [col for col in essential_columns if col not in price_data]
+                
+                # If any essential column is missing, try to fill with available data
+                if missing_essential:
+                    # If we have close but missing others, use close for all
+                    if 'close' in price_data:
+                        close_value = price_data['close']
+                        for col in missing_essential:
+                            if col != 'close':
+                                price_data[col] = close_value
+                    # If we have open but missing others, use open for all
+                    elif 'open' in price_data:
+                        open_value = price_data['open']
+                        for col in missing_essential:
+                            price_data[col] = open_value
+                    else:
+                        # Still missing essential columns
+                        logger.warning(f"Skipping row for {symbol} at {date}: missing essential price columns")
+                        continue
+                
+                # Volume is optional, set to 0 if missing
+                if 'volume' not in price_data:
+                    price_data['volume'] = 0
                 
                 # Check if price already exists
                 existing_price = self.db.query(StockPrice).filter(
@@ -543,8 +569,14 @@ class DataAcquisition:
                     existing_price.high = price_data['high']
                     existing_price.low = price_data['low']
                     existing_price.close = price_data['close']
+                    # Use close as adjusted_close if not available
                     existing_price.adjusted_close = price_data['close']  # Using Close as Adj Close since we use auto_adjust=True
-                    existing_price.volume = int(price_data['volume'])
+                    
+                    # Convert volume to int, with fallback to 0 if conversion fails
+                    try:
+                        existing_price.volume = int(price_data['volume'])
+                    except (ValueError, TypeError):
+                        existing_price.volume = 0
                 else:
                     # Create new price
                     price = StockPrice(
@@ -555,7 +587,7 @@ class DataAcquisition:
                         low=price_data['low'],
                         close=price_data['close'],
                         adjusted_close=price_data['close'],  # Using Close as Adj Close since we use auto_adjust=True
-                        volume=int(price_data['volume']),
+                        volume=int(price_data['volume']) if isinstance(price_data['volume'], (int, float)) else 0,
                         time_frame=time_frame
                     )
                     self.db.add(price)
