@@ -871,7 +871,21 @@ def _process_trend_analysis(request_data: Dict[str, Any], db: Session) -> Dict[s
         # Analyze stocks
         try:
             results = trend_strategy.analyze_stocks(request.symbols, request.custom_thresholds)
-            return {"analysis_results": results}
+            
+            # Filter out stocks that don't meet all criteria
+            filtered_results = {}
+            for symbol, result in results.items():
+                # Check if there's an error
+                if "error" in result:
+                    continue
+                
+                # Check if it meets all criteria
+                if (result.get("trend_status", {}).get("meets_trend_criteria", False) and
+                    result.get("fundamentals", {}).get("meets_fundamental_criteria", False)):
+                    filtered_results[symbol] = result
+                    
+            logger.info(f"Filtered {len(results)} stocks down to {len(filtered_results)} that meet all criteria")
+            return {"analysis_results": filtered_results}
         except Exception as e:
             logger.error(f"Error analyzing stocks: {e}")
             raise Exception(f"Error analyzing stocks: {str(e)}")
