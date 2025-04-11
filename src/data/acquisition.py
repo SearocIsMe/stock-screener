@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import re
+import random
 from src.utils.logging_config import configure_logging
 from datetime import datetime, timedelta
 import yaml
@@ -29,6 +30,7 @@ REDIS_EXPIRATION = config["database"]["redis"]["expiration_days"] * 86400  # Con
 BATCH_SIZE = config["data_fetching"]["yfinance"]["batch_size"]
 RETRY_ATTEMPTS = config["data_fetching"]["yfinance"]["retry_attempts"]
 RETRY_DELAY = config["data_fetching"]["yfinance"]["retry_delay"]
+MAX_BACKOFF_TIME = 120  # Maximum backoff time in seconds
 FMP_API_KEY = config.get("data_fetching", {}).get("fmp", {}).get("api_key", "dfiMAaPz1npS81CJctAuUwaajtCzBRsw")  # Default key from sample
 
 class DataAcquisition:
@@ -38,6 +40,112 @@ class DataAcquisition:
         """Initialize data acquisition with database session"""
         self.db = db
         self.redis = get_redis()
+        
+    def _make_api_request(self, url, method="GET", params=None, headers=None, data=None, json_data=None,
+                          retry_count=RETRY_ATTEMPTS, handle_rate_limit=True):
+        """
+        Make an API request with robust error handling and rate limit management
+        
+        Args:
+            url: API endpoint URL
+            method: HTTP method (GET, POST, etc.)
+            params: URL parameters
+            headers: HTTP headers
+            data: Request body data
+            json_data: JSON request body
+            retry_count: Number of retry attempts
+            handle_rate_limit: Whether to handle rate limiting
+            
+        Returns:
+            Response object or None if all retries failed
+        """
+        headers = headers or {}
+        current_retry = 0
+        backoff_time = RETRY_DELAY
+        
+        while current_retry <= retry_count:
+            try:
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    headers=headers,
+                    data=data,
+                    json=json_data,
+                    timeout=30  # Set a reasonable timeout
+                )
+                
+                # Check for rate limit headers
+                if 'X-Rate-Limit-Remaining' in response.headers:
+                    self.rate_limit_remaining = int(response.headers['X-Rate-Limit-Remaining'])
+                    logger.debug(f"Rate limit remaining: {self.rate_limit_remaining}")
+                
+                if 'X-Rate-Limit-Reset' in response.headers:
+                    self.rate_limit_reset = int(response.headers['X-Rate-Limit-Reset'])
+                    logger.debug(f"Rate limit resets in: {self.rate_limit_reset} seconds")
+                
+                # Handle different status codes
+                if response.status_code == 200:
+                    # Success
+                    return response
+                elif response.status_code == 429:
+                    # Rate limit exceeded
+                    if not handle_rate_limit:
+                        logger.error(f"Rate limit exceeded for {url}")
+                        return None
+                    
+                    # Get retry-after header if available
+                    retry_after = int(response.headers.get('Retry-After', backoff_time))
+                    
+                    # Use the larger of retry_after or our calculated backoff
+                    wait_time = max(retry_after, backoff_time)
+                    
+                    # Add some jitter to avoid thundering herd
+                    wait_time = min(wait_time + random.uniform(0.1, 1.0), MAX_BACKOFF_TIME)
+                    
+                    logger.warning(f"Rate limit exceeded. Waiting {wait_time:.2f} seconds before retry. "
+                                  f"Consider upgrading your API plan for higher limits.")
+                    time.sleep(wait_time)
+                    
+                    # Increase backoff for next attempt
+                    backoff_time = min(backoff_time * 2, MAX_BACKOFF_TIME)
+                elif response.status_code == 401:
+                    logger.error(f"Authentication error: Invalid API key for {url}")
+                    return None
+                elif response.status_code == 403:
+                    logger.error(f"Authorization error: Forbidden access to {url}")
+                    return None
+                elif response.status_code == 404:
+                    logger.warning(f"Resource not found: {url}")
+                    return None
+                elif response.status_code >= 500:
+                    # Server error, retry with backoff
+                    logger.warning(f"Server error {response.status_code} for {url}. Retrying in {backoff_time} seconds.")
+                    time.sleep(backoff_time)
+                    backoff_time = min(backoff_time * 2, MAX_BACKOFF_TIME)
+                else:
+                    # Other error codes
+                    logger.error(f"API request failed with status code {response.status_code}: {response.text}")
+                    return None
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"Request timeout for {url}. Retrying in {backoff_time} seconds.")
+                time.sleep(backoff_time)
+                backoff_time = min(backoff_time * 2, MAX_BACKOFF_TIME)
+            except requests.exceptions.ConnectionError:
+                logger.warning(f"Connection error for {url}. Retrying in {backoff_time} seconds.")
+                time.sleep(backoff_time)
+                backoff_time = min(backoff_time * 2, MAX_BACKOFF_TIME)
+            except Exception as e:
+                logger.error(f"Unexpected error making request to {url}: {e}")
+                return None
+            
+            current_retry += 1
+        
+        logger.error(f"All retry attempts failed for {url}")
+        return None
+        self.rate_limit_remaining = None
+        self.rate_limit_reset = None
         
     def _store_stock_prices(self, symbol, data, time_frame):
         """Store stock prices in database"""
@@ -233,9 +341,9 @@ class DataAcquisition:
         try:
             # Get P/B and P/E from Key Metrics endpoint
             metric_url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?period=annual&apikey={FMP_API_KEY}"
-            metric_response = requests.get(metric_url)
+            metric_response = self._make_api_request(metric_url)
             
-            if metric_response.status_code == 200:
+            if metric_response and metric_response.status_code == 200:
                 metric_data = metric_response.json()
                 if metric_data:
                     results['pe'] = metric_data[0].get('peRatioTTM')
@@ -243,9 +351,9 @@ class DataAcquisition:
             
             # Get ROE and Gross Margin from Ratios endpoint
             ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker}?apikey={FMP_API_KEY}"
-            ratios_response = requests.get(ratios_url)
+            ratios_response = self._make_api_request(ratios_url)
             
-            if ratios_response.status_code == 200:
+            if ratios_response and ratios_response.status_code == 200:
                 ratios_data = ratios_response.json()
                 if ratios_data:
                     roe_value = ratios_data[0].get('returnOnEquityTTM')
@@ -258,9 +366,9 @@ class DataAcquisition:
             
             # Get Dividend Yield from Profile endpoint
             profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
-            profile_response = requests.get(profile_url)
+            profile_response = self._make_api_request(profile_url)
             
-            if profile_response.status_code == 200:
+            if profile_response and profile_response.status_code == 200:
                 profile_data = profile_response.json()
                 if profile_data:
                     last_div = profile_data[0].get('lastDiv')
@@ -293,9 +401,9 @@ class DataAcquisition:
         try:
             # Try quarterly metrics first (more up-to-date)
             url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?period=quarter&apikey={FMP_API_KEY}"
-            response = requests.get(url)
+            response = self._make_api_request(url)
             
-            if response.status_code == 200:
+            if response and response.status_code == 200:
                 data = response.json()
                 if data and len(data) > 0:
                     # Prefer pbRatio (more frequently updated) over priceToBookRatio
@@ -321,18 +429,18 @@ class DataAcquisition:
         try:
             # Get latest book value per share
             metrics_url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?limit=1&apikey={FMP_API_KEY}"
-            metrics_response = requests.get(metrics_url)
+            metrics_response = self._make_api_request(metrics_url)
             
-            if metrics_response.status_code == 200:
+            if metrics_response and metrics_response.status_code == 200:
                 metrics_data = metrics_response.json()
                 if metrics_data and len(metrics_data) > 0:
                     bvps = metrics_data[0].get('bookValuePerShare')
                     
                     # Get real-time price
                     price_url = f"https://financialmodelingprep.com/api/v3/quote-short/{ticker}?apikey={FMP_API_KEY}"
-                    price_response = requests.get(price_url)
+                    price_response = self._make_api_request(price_url)
                     
-                    if price_response.status_code == 200:
+                    if price_response and price_response.status_code == 200:
                         price_data = price_response.json()
                         if price_data and len(price_data) > 0:
                             price = price_data[0].get('price')
@@ -358,9 +466,9 @@ class DataAcquisition:
         """
         try:
             profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
-            response = requests.get(profile_url)
+            response = self._make_api_request(profile_url)
             
-            if response.status_code == 200:
+            if response and response.status_code == 200:
                 data = response.json()
                 if data and len(data) > 0:
                     profile = data[0]
@@ -409,9 +517,9 @@ class DataAcquisition:
                 is_weekly = False
                 is_monthly = False
             
-            response = requests.get(url)
+            response = self._make_api_request(url)
             
-            if response.status_code == 200:
+            if response and response.status_code == 200:
                 data = response.json()
                 
                 if 'historical' in data and data['historical']:
@@ -582,31 +690,25 @@ class DataAcquisition:
             logger.info(f"Fetching historical data for batch {i//BATCH_SIZE + 1}/{(len(symbols)-1)//BATCH_SIZE + 1} ({len(batch)} symbols)")
             
             for symbol in batch:
-                for attempt in range(RETRY_ATTEMPTS):
-                    try:
-                        # Format dates for FMP API
-                        start_str = start_date.strftime('%Y-%m-%d')
-                        end_str = end_date.strftime('%Y-%m-%d')
-                        
-                        # Fetch data from FMP API
-                        historical_data = self.get_historical_data(symbol, start_str, end_str, interval)
-                        
-                        if historical_data.empty:
-                            logger.warning(f"No historical data found for {symbol}")
-                            results[symbol] = pd.DataFrame()
-                            break
-                        
+                try:
+                    # Format dates for FMP API
+                    start_str = start_date.strftime('%Y-%m-%d')
+                    end_str = end_date.strftime('%Y-%m-%d')
+                    
+                    # Fetch data from FMP API
+                    historical_data = self.get_historical_data(symbol, start_str, end_str, interval)
+                    
+                    if historical_data.empty:
+                        logger.warning(f"No historical data found for {symbol}")
+                        results[symbol] = pd.DataFrame()
+                    else:
                         # Store data in database
                         self._store_stock_prices(symbol, historical_data, time_frame)
                         results[symbol] = historical_data
-                        
-                        # Break retry loop if successful
-                        break
-                    
-                    except Exception as e:
-                        logger.error(f"Error fetching data for {symbol} (attempt {attempt+1}/{RETRY_ATTEMPTS}): {e}")
-                        if attempt < RETRY_ATTEMPTS - 1:
-                            time.sleep(RETRY_DELAY)
+                
+                except Exception as e:
+                    logger.error(f"Error fetching data for {symbol}: {e}")
+                    # Continue with next symbol
                 
                 # Sleep to avoid rate limiting
                 time.sleep(1)
@@ -638,8 +740,13 @@ class DataAcquisition:
                     # Fetch S&P 500 symbols from Wikipedia using pandas
                     try:
                         logger.info("Fetching S&P 500 symbols from Wikipedia")
-                        sp500_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-                        symbols = sp500_df['Symbol'].str.replace('.', '-', regex=False).tolist()
+                        # Use requests with our robust handler
+                        wiki_response = self._make_api_request('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+                        if wiki_response and wiki_response.status_code == 200:
+                            sp500_df = pd.read_html(wiki_response.text)[0]
+                            symbols = sp500_df['Symbol'].str.replace('.', '-', regex=False).tolist()
+                        else:
+                            raise Exception("Failed to fetch S&P 500 companies from Wikipedia")
                         logger.info(f"Retrieved {len(symbols)} S&P 500 symbols")
                     except Exception as e:
                         logger.error(f"Error fetching S&P 500 symbols: {e}")
