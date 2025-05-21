@@ -50,19 +50,31 @@ class TrendStrategy:
         # Process symbols to get actual stock symbols
         all_stock_symbols = self._process_symbols(symbols)
         
-        # Analyze each stock
-        results = {}
-        for symbol in all_stock_symbols:
-            try:
-                # Analyze individual stock
-                result = self._analyze_stock(symbol, custom_thresholds)
-                results[symbol] = result
-            except Exception as e:
-                logger.error(f"Error analyzing stock {symbol}: {e}")
-                results[symbol] = self._create_error_response(symbol, f"Error analyzing stock: {str(e)}")
-                
-        return results
+        # Get thresholds once for all stocks
+        thresholds = self._get_thresholds(custom_thresholds)
         
+        # Analyze stocks in batches
+        results = {}
+        batch_size = 20  # Process 20 stocks at a time
+        
+        logger.info(f"Analyzing {len(all_stock_symbols)} stocks in batches of {batch_size}")
+        
+        for i in range(0, len(all_stock_symbols), batch_size):
+            batch = all_stock_symbols[i:i+batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(all_stock_symbols)-1)//batch_size + 1} ({len(batch)} symbols)")
+            
+            # Process each stock in the batch
+            for symbol in batch:
+                try:
+                    # Analyze individual stock
+                    result = self._analyze_stock(symbol, thresholds)
+                    results[symbol] = result
+                except Exception as e:
+                    logger.error(f"Error analyzing stock {symbol}: {e}")
+                    results[symbol] = self._create_error_response(symbol, f"Error analyzing stock: {str(e)}")
+        
+        logger.info(f"Completed analysis of {len(results)} stocks")
+        return results
     def _process_symbols(self, symbols):
         """Process symbols to get actual stock symbols"""
         # Set default value
@@ -78,7 +90,9 @@ class TrendStrategy:
         
         # Iterate through each element in the symbols list
         for symbol in symbols:
-            symbol_upper = symbol.upper()
+            # Ensure symbol is a string (important for Chinese stock symbols which might be numerical)
+            symbol_str = str(symbol)
+            symbol_upper = symbol_str.upper()
             
             # Case 1: Symbol is "ALL" - get all symbols
             if symbol_upper == "ALL":
@@ -108,13 +122,13 @@ class TrendStrategy:
         
         return all_stock_symbols
         
-    def _analyze_stock(self, symbol, custom_thresholds=None):
+    def _analyze_stock(self, symbol, thresholds=None):
         """
         Analyze a single stock based on the trend strategy criteria
         
         Args:
-            symbol: Stock symbol to analyze
-            custom_thresholds: Custom thresholds for fundamental criteria
+            symbol: Stock symbol to analyze (must be an individual stock symbol, not a market like "NASDAQ")
+            thresholds: Pre-calculated thresholds for fundamental criteria
             
         Returns:
             Dictionary with analysis results
@@ -127,8 +141,9 @@ class TrendStrategy:
                 logger.warning(f"Stock {symbol} not found in database")
                 return self._create_error_response(symbol, "Stock not found in database")
             
-            # Get thresholds
-            thresholds = self._get_thresholds(custom_thresholds)
+            # Get thresholds if not provided
+            if thresholds is None:
+                thresholds = self._get_thresholds()
             
             # Get historical data for weekly timeframe (for trend analysis)
             weekly_data = self._get_historical_data(symbol, "weekly", days=90)
@@ -207,11 +222,22 @@ class TrendStrategy:
             return self._create_error_response(symbol, f"Error analyzing stock: {str(e)}")
     
     def _get_historical_data(self, symbol, time_frame, days=90):
-        """Get historical data for a symbol"""
+        """
+        Get historical data for a symbol
+        
+        Args:
+            symbol: Individual stock symbol (not a market like "NASDAQ")
+            time_frame: Time frame for data (daily, weekly, monthly)
+            days: Number of days of historical data to fetch
+            
+        Returns:
+            DataFrame with historical price data
+        """
         try:
             # Use the data acquisition module to get historical data with the days parameter
+            # Note: We pass symbol as a list with a single element to ensure it's treated as an individual symbol
             data = self.data_acquisition.fetch_stock_history(
-                symbols=[symbol],
+                symbols=[symbol],  # Pass as a list to ensure it's treated as an individual symbol
                 time_frame=time_frame,
                 days=days
             )

@@ -69,7 +69,9 @@ class StockFilter:
         
         # Iterate through each element in the symbols list
         for symbol in symbols:
-            symbol_upper = symbol.upper()
+            # Ensure symbol is a string (important for Chinese stock symbols which might be numerical)
+            symbol_str = str(symbol)
+            symbol_upper = symbol_str.upper()
             
             # Case 1: Symbol is "ALL" - get all symbols
             if symbol_upper == "ALL":

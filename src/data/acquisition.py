@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import yaml
 import requests
 import pandas as pd
+import akshare as ak
 from sqlalchemy.orm import Session
 from .database import get_redis
 from .models import Stock, StockPrice, TimeFrame
@@ -336,57 +337,50 @@ class DataAcquisition:
         Returns:
             Dictionary with pb, pe, roe, dy, gm (or None if unavailable)
         """
-        results = {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
-        
-        try:
-            # Get P/B and P/E from Key Metrics endpoint
-            metric_url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?period=annual&apikey={FMP_API_KEY}"
-            metric_response = self._make_api_request(metric_url)
-            
-            if metric_response and metric_response.status_code == 200:
-                metric_data = metric_response.json()
-                if metric_data:
-                    results['pe'] = metric_data[0].get('peRatioTTM')
-                    results['pb'] = metric_data[0].get('pbRatio')
-            
-            # Get ROE and Gross Margin from Ratios endpoint
-            ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{ticker}?apikey={FMP_API_KEY}"
-            ratios_response = self._make_api_request(ratios_url)
-            
-            if ratios_response and ratios_response.status_code == 200:
-                ratios_data = ratios_response.json()
-                if ratios_data:
-                    roe_value = ratios_data[0].get('returnOnEquityTTM')
-                    if roe_value is not None:
-                        results['roe'] = roe_value * 100  # Convert to %
-                    
-                    gm_value = ratios_data[0].get('grossProfitMarginTTM')
-                    if gm_value is not None:
-                        results['gm'] = gm_value * 100  # Convert to %
-            
-            # Get Dividend Yield from Profile endpoint
-            profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
-            profile_response = self._make_api_request(profile_url)
-            
-            if profile_response and profile_response.status_code == 200:
-                profile_data = profile_response.json()
-                if profile_data:
-                    last_div = profile_data[0].get('lastDiv')
-                    price = profile_data[0].get('price')
+        # For a single ticker, use the batch methods with a list of one ticker
+        # This ensures consistency and allows for code reuse
+        if isinstance(ticker, str):
+            try:
+                # Get data from batch methods
+                profiles = self.get_batch_profiles([ticker])
+                key_metrics = self.get_batch_key_metrics([ticker])
+                ratios = self.get_batch_ratios([ticker])
+                
+                # Initialize results
+                results = {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
+                
+                # Extract metrics
+                if ticker in key_metrics:
+                    results['pe'] = key_metrics[ticker].get('pe')
+                    results['pb'] = key_metrics[ticker].get('pb')
+                
+                # Extract ratios
+                if ticker in ratios:
+                    results['roe'] = ratios[ticker].get('roe')
+                    results['gm'] = ratios[ticker].get('gm')
+                
+                # Calculate dividend yield
+                if ticker in profiles:
+                    last_div = profiles[ticker].get('last_div')
+                    price = profiles[ticker].get('price')
                     
                     if last_div is not None and price is not None and price > 0:
                         results['dy'] = (last_div / price) * 100  # Convert to %
-            
-            # If P/B is still None, try to calculate it
-            if results['pb'] is None:
-                results['pb'] = self.get_pb_ratio(ticker)
-            
-            # Round values for readability
-            return {k: round(v, 2) if v is not None else None for k, v in results.items()}
-            
-        except Exception as e:
-            logger.error(f"Error getting fundamentals for {ticker}: {e}")
-            return results
+                
+                # If P/B is still None, try to calculate it
+                if results['pb'] is None:
+                    results['pb'] = self.get_pb_ratio(ticker)
+                
+                # Round values for readability
+                return {k: round(v, 2) if v is not None else None for k, v in results.items()}
+                
+            except Exception as e:
+                logger.error(f"Error getting fundamentals for {ticker}: {e}")
+                return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
+        else:
+            # If ticker is not a string (e.g., a list), return empty results
+            logger.error(f"Invalid ticker format: {ticker}")
+            return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
 
     def get_pb_ratio(self, ticker):
         """
@@ -464,34 +458,27 @@ class DataAcquisition:
         Returns:
             Dictionary with stock profile information
         """
-        try:
-            profile_url = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={FMP_API_KEY}"
-            response = self._make_api_request(profile_url)
-            
-            if response and response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    profile = data[0]
-                    return {
-                        'name': profile.get('companyName'),
-                        'exchange': profile.get('exchangeShortName'),
-                        'sector': profile.get('sector'),
-                        'industry': profile.get('industry'),
-                        'description': profile.get('description'),
-                        'website': profile.get('website'),
-                        'market_cap': profile.get('mktCap'),
-                        'price': profile.get('price')
-                    }
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting stock profile for {ticker}: {e}")
+        # For a single ticker, use the batch method with a list of one ticker
+        if isinstance(ticker, str):
+            try:
+                profiles = self.get_batch_profiles([ticker])
+                
+                if ticker in profiles:
+                    return profiles[ticker]
+                
+                return None
+                
+            except Exception as e:
+                logger.error(f"Error getting stock profile for {ticker}: {e}")
+                return None
+        else:
+            # If ticker is not a string (e.g., a list), return None
+            logger.error(f"Invalid ticker format: {ticker}")
             return None
 
     def get_historical_data(self, ticker, from_date, to_date, interval='1day'):
         """
-        Get historical price data from FMP API
+        Get historical price data from FMP API or akshare for Chinese stocks
         
         Args:
             ticker: Stock symbol
@@ -503,21 +490,86 @@ class DataAcquisition:
             DataFrame with historical price data
         """
         try:
-            # Map interval to FMP API parameter
-            if interval == '1week':
-                url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
-                is_weekly = True
-                is_monthly = False
-            elif interval == '1month':
-                url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
-                is_weekly = False
-                is_monthly = True
-            else:  # Default to daily
-                url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
-                is_weekly = False
-                is_monthly = False
+            # Ensure ticker is a string
+            ticker_str = str(ticker)
             
-            response = self._make_api_request(url)
+            # Check if this is a Chinese A stock (6 digits, starting with 6, 0, or 3)
+            is_chinese_stock = False
+            if len(ticker_str) == 6 and (ticker_str.startswith('6') or ticker_str.startswith('0') or ticker_str.startswith('3') or ticker_str.startswith('4') or ticker_str.startswith('8')):
+                is_chinese_stock = True
+                logger.debug(f"Detected Chinese A stock: {ticker_str}")
+                
+                # Use akshare to fetch Chinese stock data
+                try:
+                    # Convert date strings to the format required by akshare (YYYYMMDD)
+                    from_date_ak = datetime.strptime(from_date, '%Y-%m-%d').strftime('%Y%m%d')
+                    to_date_ak = datetime.strptime(to_date, '%Y-%m-%d').strftime('%Y%m%d')
+                    
+                    # Determine period based on interval
+                    period = "daily"
+                    if interval == '1week':
+                        period = "weekly"
+                    elif interval == '1month':
+                        period = "monthly"
+                    
+                    # Fetch data using akshare
+                    stock_data = ak.stock_zh_a_hist(symbol=ticker_str, period=period,
+                                                   start_date=from_date_ak, end_date=to_date_ak,
+                                                   adjust="qfq")  # qfq = forward adjusted
+                    
+                    if not stock_data.empty:
+                        # Rename columns to match our database schema
+                        stock_data = stock_data.rename(columns={
+                            '日期': 'date',
+                            '开盘': 'open',
+                            '收盘': 'close',
+                            '最高': 'high',
+                            '最低': 'low',
+                            '成交量': 'volume',
+                            '涨跌幅': 'change_pct',
+                            '换手率': 'turnover_rate'
+                        })
+                        
+                        # Convert date column to datetime
+                        stock_data['date'] = pd.to_datetime(stock_data['date'])
+                        
+                        # Set date as index
+                        stock_data = stock_data.set_index('date')
+                        
+                        # Add adjusted_close column (same as close for qfq adjusted data)
+                        stock_data['adjusted_close'] = stock_data['close']
+                        
+                        # Sort by date (newest first)
+                        stock_data = stock_data.sort_index(ascending=False)
+                        
+                        return stock_data
+                    else:
+                        logger.warning(f"No data found for Chinese stock {ticker_str} using akshare")
+                        # Fall back to FMP API if akshare fails
+                        is_chinese_stock = False
+                
+                except Exception as ak_err:
+                    logger.error(f"Error fetching Chinese stock data for {ticker_str} using akshare: {ak_err}")
+                    # Fall back to FMP API if akshare fails
+                    is_chinese_stock = False
+            
+            # If not a Chinese stock or akshare failed, use FMP API
+            if not is_chinese_stock:
+                # Map interval to FMP API parameter
+                if interval == '1week':
+                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
+                    is_weekly = True
+                    is_monthly = False
+                elif interval == '1month':
+                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
+                    is_weekly = False
+                    is_monthly = True
+                else:  # Default to daily
+                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
+                    is_weekly = False
+                    is_monthly = False
+                
+                response = self._make_api_request(url)
             
             if response and response.status_code == 200:
                 data = response.json()
@@ -527,7 +579,7 @@ class DataAcquisition:
                     df = pd.DataFrame(data['historical'])
                     
                     # Log the actual columns for debugging
-                    logger.debug(f"Original columns for {ticker}: {df.columns.tolist()}")
+                    logger.debug(f"Original columns for {ticker_str}: {df.columns.tolist()}")
                     
                     # Check if expected columns exist and create them if they don't
                     expected_columns = ['date', 'open', 'high', 'low', 'close', 'volume', 'adjClose']
@@ -576,7 +628,7 @@ class DataAcquisition:
                     missing_columns = [col for col in required_columns if col not in df.columns]
                     
                     if missing_columns:
-                        logger.warning(f"Missing columns for {ticker}: {missing_columns}. Creating them with default values.")
+                        logger.warning(f"Missing columns for {ticker_str}: {missing_columns}. Creating them with default values.")
                         for col in missing_columns:
                             if col == 'adjusted_close' and 'close' in df.columns:
                                 df['adjusted_close'] = df['close']
@@ -596,7 +648,7 @@ class DataAcquisition:
                                 'volume': 'sum'
                             })
                         except Exception as e:
-                            logger.error(f"Error resampling weekly data for {ticker}: {e}")
+                            logger.error(f"Error resampling weekly data for {ticker_str}: {e}")
                             # Return the daily data if resampling fails
                     elif is_monthly:
                         try:
@@ -610,17 +662,17 @@ class DataAcquisition:
                                 'volume': 'sum'
                             })
                         except Exception as e:
-                            logger.error(f"Error resampling monthly data for {ticker}: {e}")
+                            logger.error(f"Error resampling monthly data for {ticker_str}: {e}")
                             # Return the daily data if resampling fails
                     
                     return df
             
             # If we get here, something went wrong
-            logger.warning(f"No historical data found for {ticker}")
+            logger.warning(f"No historical data found for {ticker_str}")
             return pd.DataFrame()
             
         except Exception as e:
-            logger.error(f"Error getting historical data for {ticker}: {e}")
+            logger.error(f"Error getting historical data for {ticker_str}: {e}")
             return pd.DataFrame()
             
     def fetch_stock_history(self, symbols, start_date=None, end_date=None, time_frame="daily", days=None):
@@ -628,7 +680,10 @@ class DataAcquisition:
         Fetch historical stock data for specified symbols
         
         Args:
-            symbols: List of stock symbols or "all" for all symbols
+            symbols: List of stock symbols, market name (e.g., "NASDAQ"), or "all" for all symbols
+                    If a list is provided, each element is treated as an individual stock symbol
+                    If a string is provided, it's checked against known markets (SP500, NASDAQ, NYSE, AMEX)
+                    and expanded to all symbols in that market if it matches
             start_date: Start date for historical data (default: 1 year ago)
             end_date: End date for historical data (default: today)
             time_frame: Time frame for data (daily, weekly, monthly)
@@ -817,35 +872,199 @@ class DataAcquisition:
         
         return all_symbols
     
+    def get_batch_profiles(self, symbols):
+        """
+        Get stock profiles for multiple symbols in a single API call
+        
+        Args:
+            symbols: List of stock symbols
+            
+        Returns:
+            Dictionary of profiles by symbol
+        """
+        if not symbols:
+            return {}
+            
+        try:
+            # Join symbols with commas for batch request
+            symbols_str = ','.join(symbols)
+            profile_url = f"https://financialmodelingprep.com/api/v3/profile/{symbols_str}?apikey={FMP_API_KEY}"
+            response = self._make_api_request(profile_url)
+            
+            if response and response.status_code == 200:
+                profiles_data = response.json()
+                
+                # Create a dictionary of profiles by symbol
+                profiles = {}
+                for profile in profiles_data:
+                    symbol = profile.get('symbol')
+                    if symbol:
+                        profiles[symbol] = {
+                            'name': profile.get('companyName'),
+                            'exchange': profile.get('exchangeShortName'),
+                            'sector': profile.get('sector'),
+                            'industry': profile.get('industry'),
+                            'description': profile.get('description'),
+                            'website': profile.get('website'),
+                            'market_cap': profile.get('mktCap'),
+                            'price': profile.get('price'),
+                            'last_div': profile.get('lastDiv')
+                        }
+                
+                return profiles
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting batch profiles: {e}")
+            return {}
+    
+    def get_batch_key_metrics(self, symbols, period="annual"):
+        """
+        Get key metrics for multiple symbols in a single API call
+        
+        Args:
+            symbols: List of stock symbols
+            period: Period for metrics (annual, quarter)
+            
+        Returns:
+            Dictionary of key metrics by symbol
+        """
+        if not symbols:
+            return {}
+            
+        try:
+            # Join symbols with commas for batch request
+            symbols_str = ','.join(symbols)
+            metrics_url = f"https://financialmodelingprep.com/api/v3/key-metrics/{symbols_str}?period={period}&apikey={FMP_API_KEY}"
+            response = self._make_api_request(metrics_url)
+            
+            if response and response.status_code == 200:
+                metrics_data = response.json()
+                
+                # Create a dictionary of metrics by symbol
+                metrics = {}
+                for metric in metrics_data:
+                    symbol = metric.get('symbol')
+                    if symbol:
+                        metrics[symbol] = {
+                            'pe': metric.get('peRatioTTM'),
+                            'pb': metric.get('pbRatio')
+                        }
+                
+                return metrics
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting batch key metrics: {e}")
+            return {}
+    
+    def get_batch_ratios(self, symbols):
+        """
+        Get financial ratios for multiple symbols in a single API call
+        
+        Args:
+            symbols: List of stock symbols
+            
+        Returns:
+            Dictionary of ratios by symbol
+        """
+        if not symbols:
+            return {}
+            
+        try:
+            # Join symbols with commas for batch request
+            symbols_str = ','.join(symbols)
+            ratios_url = f"https://financialmodelingprep.com/api/v3/ratios-ttm/{symbols_str}?apikey={FMP_API_KEY}"
+            response = self._make_api_request(ratios_url)
+            
+            if response and response.status_code == 200:
+                ratios_data = response.json()
+                
+                # Create a dictionary of ratios by symbol
+                ratios = {}
+                for ratio in ratios_data:
+                    symbol = ratio.get('symbol')
+                    if symbol:
+                        roe_value = ratio.get('returnOnEquityTTM')
+                        gm_value = ratio.get('grossProfitMarginTTM')
+                        
+                        ratios[symbol] = {
+                            'roe': roe_value * 100 if roe_value is not None else None,  # Convert to %
+                            'gm': gm_value * 100 if gm_value is not None else None  # Convert to %
+                        }
+                
+                return ratios
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting batch ratios: {e}")
+            return {}
+    
     def _process_stock_symbols(self, symbols, exchange=None):
         """Process stock symbols to get ticker information and store in database"""
         logger.info(f"Processing {len(symbols)} symbols for ticker information")
         
-        # Process in batches to avoid rate limiting
-        for i in range(0, len(symbols), BATCH_SIZE):
-            batch = symbols[i:i+BATCH_SIZE]
-            logger.info(f"Processing batch {i//BATCH_SIZE + 1}/{(len(symbols)-1)//BATCH_SIZE + 1} ({len(batch)} symbols)")
+        # Filter out indices and separate Chinese A stocks
+        filtered_symbols = []
+        chinese_stocks = []
+        
+        for symbol in symbols:
+            # Skip symbols containing '^' character (indices)
+            if '^' in symbol:
+                logger.info(f"Skipping index symbol: {symbol}")
+                continue
+                
+            # Check if it's a Chinese A stock (pattern: number.SH or number.SZ)
+            chinese_stock_pattern = r'^\d'
+            is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
             
-            for symbol in batch:
-                try:
-                    # Skip symbols containing '^' character (indices)
-                    if '^' in symbol:
-                        logger.info(f"Skipping index symbol: {symbol}")
-                        continue
-                    
-                    # Check if it's a Chinese A stock (pattern: number.SH or number.SZ)
-                    chinese_stock_pattern = r'^\d'
-                    is_chinese_a_stock = bool(re.match(chinese_stock_pattern, symbol))
-                    
-                    if is_chinese_a_stock:
-                        # Handle Chinese A stocks differently
-                        logger.info(f"Processing Chinese A stock: {symbol}")
-                        self._process_chinese_a_stock(symbol, exchange)
-                    else:
-                        # Get stock info from FMP API for non-Chinese stocks
-                        fundamentals = self.get_fundamentals(symbol)
-                        profile = self.get_stock_profile(symbol)
+            if is_chinese_a_stock:
+                chinese_stocks.append(symbol)
+            else:
+                filtered_symbols.append(symbol)
+        
+        # Process Chinese A stocks separately (they don't work well with FMP API)
+        for symbol in chinese_stocks:
+            logger.info(f"Processing Chinese A stock: {symbol}")
+            self._process_chinese_a_stock(symbol, exchange)
+        
+        # Process regular stocks in batches
+        for i in range(0, len(filtered_symbols), BATCH_SIZE):
+            batch = filtered_symbols[i:i+BATCH_SIZE]
+            logger.info(f"Processing batch {i//BATCH_SIZE + 1}/{(len(filtered_symbols)-1)//BATCH_SIZE + 1} ({len(batch)} symbols)")
+            
+            try:
+                # Get batch data from FMP API
+                profiles = self.get_batch_profiles(batch)
+                key_metrics = self.get_batch_key_metrics(batch)
+                ratios = self.get_batch_ratios(batch)
+                
+                # Process each symbol in the batch
+                for symbol in batch:
+                    try:
+                        profile = profiles.get(symbol, {})
+                        metrics = key_metrics.get(symbol, {})
+                        ratio = ratios.get(symbol, {})
                         
+                        # Combine data from different endpoints
+                        fundamentals = {
+                            'pe': metrics.get('pe'),
+                            'pb': metrics.get('pb'),
+                            'roe': ratio.get('roe'),
+                            'gm': ratio.get('gm'),
+                            'dy': None
+                        }
+                        
+                        # Calculate dividend yield if possible
+                        last_div = profile.get('last_div')
+                        price = profile.get('price')
+                        if last_div is not None and price is not None and price > 0:
+                            fundamentals['dy'] = (last_div / price) * 100  # Convert to %
+                        
+                        # Skip if no profile data found
                         if not profile:
                             logger.warning(f"[ERROR] No profile data found for {symbol}")
                             continue
@@ -853,20 +1072,38 @@ class DataAcquisition:
                         # Store in database
                         self._store_stock_info(
                             symbol=symbol,
-                            name=profile.get('name', None),
+                            name=profile.get('name'),
                             exchange=profile.get('exchange', exchange),
-                            sector=profile.get('sector', None),
-                            industry=profile.get('industry', None),
-                            gross_margin=fundamentals.get('gm', None),
-                            roe=fundamentals.get('roe', None),
+                            sector=profile.get('sector'),
+                            industry=profile.get('industry'),
+                            gross_margin=fundamentals.get('gm'),
+                            roe=fundamentals.get('roe'),
                             rd_ratio=None,  # Not available in FMP API
-                            pe_ratio=fundamentals.get('pe', None),
-                            pb_ratio=fundamentals.get('pb', None),
-                            dividend_yield=fundamentals.get('dy', None)
+                            pe_ratio=fundamentals.get('pe'),
+                            pb_ratio=fundamentals.get('pb'),
+                            dividend_yield=fundamentals.get('dy')
                         )
-                except Exception as e:
-                    logger.warning(f"Error getting info for {symbol}: {e}")
-                    # Still store basic info
+                    except Exception as e:
+                        logger.warning(f"Error processing data for {symbol}: {e}")
+                        # Still store basic info
+                        self._store_stock_info(
+                            symbol=symbol,
+                            name=None,
+                            exchange=exchange,
+                            sector=None,
+                            industry=None,
+                            gross_margin=None,
+                            roe=None,
+                            rd_ratio=None,
+                            pe_ratio=None,
+                            pb_ratio=None,
+                            dividend_yield=None
+                        )
+            
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+                # Store basic info for all symbols in the batch
+                for symbol in batch:
                     self._store_stock_info(
                         symbol=symbol,
                         name=None,
@@ -880,19 +1117,140 @@ class DataAcquisition:
                         pb_ratio=None,
                         dividend_yield=None
                     )
-                    # Sleep to avoid rate limiting
-                    time.sleep(5)
+
     
     def _process_chinese_a_stock(self, symbol, exchange=None):
-        """Process Chinese A stock information using alternative methods"""
+        """
+        Process Chinese A stock information using akshare library
+        
+        Args:
+            symbol: Stock symbol (e.g., '600000' for Shanghai or '000001' for Shenzhen)
+            exchange: Exchange code (optional)
+            
+        Returns:
+            Stock object if successful, None otherwise
+        """
         try:
-            # For Chinese A stocks, we'll just store minimal information
-            # as FMP API doesn't support Chinese A stocks well
-            self._store_stock_info(
+            logger.info(f"Fetching Chinese A stock data for {symbol} using akshare")
+            
+            # Determine the full symbol with exchange prefix if needed
+            # Ensure symbol is a string
+            symbol_str = str(symbol)
+            if len(symbol_str) == 6:
+                if symbol_str.startswith('6'):
+                    full_symbol = f"sh{symbol_str}"  # Shanghai
+                elif symbol_str.startswith('0') or symbol_str.startswith('3'):
+                    full_symbol = f"sz{symbol_str}"  # Shenzhen
+                else:
+                    full_symbol = symbol
+            else:
+                full_symbol = symbol
+                
+            # Fetch stock profile information
+            try:
+                # Get stock information
+                stock_info = ak.stock_individual_info_em(symbol=symbol)
+                
+                if not stock_info.empty:
+                    # Extract company name
+                    company_name = None
+                    for _, row in stock_info.iterrows():
+                        if row[0] == "股票简称" or row[0] == "名称":  # Stock name
+                            company_name = row[1]
+                            break
+                    
+                    # Extract industry information
+                    industry = None
+                    sector = None
+                    for _, row in stock_info.iterrows():
+                        if row[0] == "所属行业":  # Industry
+                            industry = row[1]
+                            break
+                    
+                    # Get financial metrics
+                    try:
+                        # Fetch financial indicators
+                        financial_data = ak.stock_financial_analysis_indicator(symbol=symbol)
+                        
+                        # Extract latest metrics
+                        if not financial_data.empty:
+                            latest_data = financial_data.iloc[0]
+                            
+                            # Extract ROE (Return on Equity)
+                            roe = None
+                            if "净资产收益率(%)" in latest_data:
+                                roe = latest_data["净资产收益率(%)"]
+                            elif "加权净资产收益率(%)" in latest_data:
+                                roe = latest_data["加权净资产收益率(%)"]
+                                
+                            # Extract Gross Margin
+                            gross_margin = None
+                            if "销售毛利率(%)" in latest_data:
+                                gross_margin = latest_data["销售毛利率(%)"]
+                                
+                            # Get P/E and P/B ratios from real-time quotes
+                            quote_data = ak.stock_zh_a_spot_em()
+                            stock_quote = quote_data[quote_data['代码'] == symbol]
+                            
+                            pe_ratio = None
+                            pb_ratio = None
+                            dividend_yield = None
+                            
+                            if not stock_quote.empty:
+                                if '市盈率-动态' in stock_quote.columns:
+                                    pe_ratio = stock_quote['市盈率-动态'].values[0]
+                                if '市净率' in stock_quote.columns:
+                                    pb_ratio = stock_quote['市净率'].values[0]
+                                if '涨跌幅' in stock_quote.columns and '现价' in stock_quote.columns:
+                                    # Calculate dividend yield if available
+                                    try:
+                                        dividend_data = ak.stock_history_dividend_detail(symbol=symbol, indicator="分红")
+                                        if not dividend_data.empty and '分红金额' in dividend_data.columns:
+                                            latest_dividend = dividend_data['分红金额'].iloc[0]
+                                            current_price = stock_quote['现价'].values[0]
+                                            if latest_dividend > 0 and current_price > 0:
+                                                dividend_yield = (latest_dividend / current_price) * 100
+                                    except Exception as div_err:
+                                        logger.debug(f"Could not fetch dividend data for {symbol}: {div_err}")
+                        
+                    except Exception as fin_err:
+                        logger.warning(f"Error fetching financial metrics for {symbol}: {fin_err}")
+                        roe = None
+                        gross_margin = None
+                        pe_ratio = None
+                        pb_ratio = None
+                        dividend_yield = None
+                    
+                    # Store stock information
+                    stock = self._store_stock_info(
+                        symbol=symbol,
+                        name=company_name,
+                        exchange="ACN",  # Chinese A stock
+                        sector=sector,
+                        industry=industry,
+                        gross_margin=gross_margin,
+                        roe=roe,
+                        rd_ratio=None,  # R&D ratio not readily available
+                        pe_ratio=pe_ratio,
+                        pb_ratio=pb_ratio,
+                        dividend_yield=dividend_yield
+                    )
+                    
+                    # Fetch historical price data
+                    self._fetch_chinese_stock_prices(symbol, full_symbol)
+                    
+                    return stock
+                    
+            except Exception as info_err:
+                logger.warning(f"Error fetching stock info for {symbol}: {info_err}")
+            
+            # If we reach here, we couldn't get detailed information
+            # Store minimal information
+            stock = self._store_stock_info(
                 symbol=symbol,
                 name=None,
                 exchange="ACN",
-                sector=f"Chinese A Stock",
+                sector="Chinese A Stock",
                 industry=None,
                 gross_margin=None,
                 roe=None,
@@ -902,13 +1260,19 @@ class DataAcquisition:
                 dividend_yield=None
             )
             
+            # Still try to fetch price data with minimal info
+            symbol_str = str(symbol)  # Ensure symbol is a string
+            self._fetch_chinese_stock_prices(symbol_str, full_symbol if 'full_symbol' in locals() else f"sh{symbol_str}" if symbol_str.startswith('6') else f"sz{symbol_str}")
+            
+            return stock
+            
         except Exception as e:
             logger.error(f"Error processing Chinese A stock {symbol}: {e}")
-            # Store minimal information
-            self._store_stock_info(
+            # Store minimal information as fallback
+            return self._store_stock_info(
                 symbol=symbol,
                 name=None,
-                exchange=exchange,
+                exchange=exchange or "ACN",
                 sector=None,
                 industry=None,
                 gross_margin=None,
@@ -918,3 +1282,76 @@ class DataAcquisition:
                 pb_ratio=None,
                 dividend_yield=None
             )
+    
+    def _fetch_chinese_stock_prices(self, symbol, full_symbol):
+        """
+        Fetch historical price data for Chinese A stocks using akshare
+        
+        Args:
+            symbol: Stock symbol without exchange prefix (e.g., '600000')
+            full_symbol: Stock symbol with exchange prefix (e.g., 'sh600000')
+        """
+        try:
+            # Ensure symbols are strings
+            symbol_str = str(symbol)
+            full_symbol_str = str(full_symbol)
+            
+            # Get daily price data for the past year
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
+            
+            # Fetch daily K-line data
+            daily_data = ak.stock_zh_a_hist(symbol=symbol_str, period="daily",
+                                           start_date=start_date, end_date=end_date,
+                                           adjust="qfq")  # qfq = forward adjusted
+            
+            if not daily_data.empty:
+                # Rename columns to match our database schema
+                daily_data = daily_data.rename(columns={
+                    '日期': 'date',
+                    '开盘': 'open',
+                    '收盘': 'close',
+                    '最高': 'high',
+                    '最低': 'low',
+                    '成交量': 'volume'
+                })
+                
+                # Convert date column to datetime
+                daily_data['date'] = pd.to_datetime(daily_data['date'])
+                
+                # Set date as index
+                daily_data = daily_data.set_index('date')
+                
+                # Store daily data
+                self._store_stock_prices(symbol_str, daily_data, TimeFrame.DAILY)
+                
+                # Create weekly data by resampling
+                weekly_data = daily_data.resample('W').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                })
+                
+                # Store weekly data
+                self._store_stock_prices(symbol_str, weekly_data, TimeFrame.WEEKLY)
+                
+                # Create monthly data by resampling
+                monthly_data = daily_data.resample('M').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                })
+                
+                # Store monthly data
+                self._store_stock_prices(symbol_str, monthly_data, TimeFrame.MONTHLY)
+                
+                logger.info(f"Successfully fetched and stored price data for Chinese A stock {symbol_str}")
+            else:
+                logger.warning(f"No price data found for Chinese A stock {symbol_str}")
+                
+        except Exception as e:
+            logger.error(f"Error fetching price data for Chinese A stock {symbol_str}: {e}")
