@@ -1,5 +1,6 @@
 """
-Data acquisition module for fetching stock data from Financial Modeling Prep API
+Data acquisition module for fetching stock data with free alternatives
+Enhanced with multiple free data sources to avoid API rate limits
 """
 import os
 import json
@@ -16,6 +17,7 @@ import akshare as ak
 from sqlalchemy.orm import Session
 from .database import get_redis
 from .models import Stock, StockPrice, TimeFrame
+from .free_data_sources import free_data_sources
 
 # Configure logging
 configure_logging()
@@ -35,17 +37,19 @@ MAX_BACKOFF_TIME = 120  # Maximum backoff time in seconds
 FMP_API_KEY = config.get("data_fetching", {}).get("fmp", {}).get("api_key", "dfiMAaPz1npS81CJctAuUwaajtCzBRsw")  # Default key from sample
 
 class DataAcquisition:
-    """Data acquisition class for fetching stock data"""
+    """Data acquisition class for fetching stock data with free alternatives"""
     
     def __init__(self, db: Session):
         """Initialize data acquisition with database session"""
         self.db = db
         self.redis = get_redis()
+        self.use_free_sources = True  # Flag to enable free sources
+        self.fmp_rate_limit_exceeded = False  # Track FMP rate limit status
         
     def _make_api_request(self, url, method="GET", params=None, headers=None, data=None, json_data=None,
                           retry_count=RETRY_ATTEMPTS, handle_rate_limit=True):
         """
-        Make an API request with robust error handling and rate limit management
+        Make an API request with robust error handling and free fallback options
         
         Args:
             url: API endpoint URL
@@ -60,6 +64,9 @@ class DataAcquisition:
         Returns:
             Response object or None if all retries failed
         """
+        # If FMP rate limit is exceeded and this is an FMP request, log and continue
+        if self.fmp_rate_limit_exceeded and "financialmodelingprep.com" in url:
+            logger.info("FMP rate limit exceeded, consider using free alternatives")
         headers = headers or {}
         current_retry = 0
         backoff_time = RETRY_DELAY
@@ -78,19 +85,28 @@ class DataAcquisition:
                 
                 # Check for rate limit headers
                 if 'X-Rate-Limit-Remaining' in response.headers:
-                    self.rate_limit_remaining = int(response.headers['X-Rate-Limit-Remaining'])
-                    logger.debug(f"Rate limit remaining: {self.rate_limit_remaining}")
+                    remaining = int(response.headers['X-Rate-Limit-Remaining'])
+                    logger.debug(f"Rate limit remaining: {remaining}")
+                    
+                    # Mark FMP as rate limited if very few requests remaining
+                    if remaining < 5 and "financialmodelingprep.com" in url:
+                        self.fmp_rate_limit_exceeded = True
+                        logger.warning("FMP API approaching rate limit, consider switching to free sources")
                 
                 if 'X-Rate-Limit-Reset' in response.headers:
-                    self.rate_limit_reset = int(response.headers['X-Rate-Limit-Reset'])
-                    logger.debug(f"Rate limit resets in: {self.rate_limit_reset} seconds")
+                    reset_time = int(response.headers['X-Rate-Limit-Reset'])
+                    logger.debug(f"Rate limit resets in: {reset_time} seconds")
                 
                 # Handle different status codes
                 if response.status_code == 200:
                     # Success
                     return response
                 elif response.status_code == 429:
-                    # Rate limit exceeded
+                    # Rate limit exceeded - mark FMP as rate limited
+                    if "financialmodelingprep.com" in url:
+                        self.fmp_rate_limit_exceeded = True
+                        logger.warning("FMP API rate limit exceeded, consider using free alternatives")
+                    
                     if not handle_rate_limit:
                         logger.error(f"Rate limit exceeded for {url}")
                         return None
@@ -105,16 +121,22 @@ class DataAcquisition:
                     wait_time = min(wait_time + random.uniform(0.1, 1.0), MAX_BACKOFF_TIME)
                     
                     logger.warning(f"Rate limit exceeded. Waiting {wait_time:.2f} seconds before retry. "
-                                  f"Consider upgrading your API plan for higher limits.")
+                                  f"Consider using free data sources to avoid rate limits.")
                     time.sleep(wait_time)
                     
                     # Increase backoff for next attempt
                     backoff_time = min(backoff_time * 2, MAX_BACKOFF_TIME)
                 elif response.status_code == 401:
                     logger.error(f"Authentication error: Invalid API key for {url}")
+                    if "financialmodelingprep.com" in url:
+                        self.fmp_rate_limit_exceeded = True
+                        logger.info("Consider using free data sources as alternatives")
                     return None
                 elif response.status_code == 403:
                     logger.error(f"Authorization error: Forbidden access to {url}")
+                    if "financialmodelingprep.com" in url:
+                        self.fmp_rate_limit_exceeded = True
+                        logger.info("Consider using free data sources as alternatives")
                     return None
                 elif response.status_code == 404:
                     logger.warning(f"Resource not found: {url}")
@@ -329,7 +351,7 @@ class DataAcquisition:
             
     def get_fundamentals(self, ticker):
         """
-        Get fundamental data for a stock from FMP API
+        Get fundamental data with free alternatives to avoid rate limits
         
         Args:
             ticker: Stock symbol
@@ -337,54 +359,75 @@ class DataAcquisition:
         Returns:
             Dictionary with pb, pe, roe, dy, gm (or None if unavailable)
         """
-        # For a single ticker, use the batch methods with a list of one ticker
-        # This ensures consistency and allows for code reuse
-        if isinstance(ticker, str):
-            try:
-                # Get data from batch methods
-                profiles = self.get_batch_profiles([ticker])
-                key_metrics = self.get_batch_key_metrics([ticker])
-                ratios = self.get_batch_ratios([ticker])
-                
-                # Initialize results
-                results = {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
-                
-                # Extract metrics
-                if ticker in key_metrics:
-                    results['pe'] = key_metrics[ticker].get('pe')
-                    results['pb'] = key_metrics[ticker].get('pb')
-                
-                # Extract ratios
-                if ticker in ratios:
-                    results['roe'] = ratios[ticker].get('roe')
-                    results['gm'] = ratios[ticker].get('gm')
-                
-                # Calculate dividend yield
-                if ticker in profiles:
-                    last_div = profiles[ticker].get('last_div')
-                    price = profiles[ticker].get('price')
-                    
-                    if last_div is not None and price is not None and price > 0:
-                        results['dy'] = (last_div / price) * 100  # Convert to %
-                
-                # If P/B is still None, try to calculate it
-                if results['pb'] is None:
-                    results['pb'] = self.get_pb_ratio(ticker)
-                
-                # Round values for readability
-                return {k: round(v, 2) if v is not None else None for k, v in results.items()}
-                
-            except Exception as e:
-                logger.error(f"Error getting fundamentals for {ticker}: {e}")
-                return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
-        else:
-            # If ticker is not a string (e.g., a list), return empty results
+        if not isinstance(ticker, str):
             logger.error(f"Invalid ticker format: {ticker}")
+            return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
+        
+        try:
+            # Method 1: Try Yahoo Finance first (free and reliable)
+            logger.debug(f"Trying Yahoo Finance for fundamentals of {ticker}")
+            yahoo_fundamentals = free_data_sources.get_stock_fundamentals_yahoo(ticker)
+            
+            # Check if we got meaningful data from Yahoo
+            if any(v is not None for v in yahoo_fundamentals.values()):
+                logger.info(f"Successfully got fundamentals for {ticker} from Yahoo Finance")
+                return yahoo_fundamentals
+            
+            # Method 2: Try FMP API only if not rate limited
+            if not self.fmp_rate_limit_exceeded:
+                logger.debug(f"Trying FMP API for fundamentals of {ticker}")
+                try:
+                    # Get data from batch methods
+                    profiles = self.get_batch_profiles([ticker])
+                    key_metrics = self.get_batch_key_metrics([ticker])
+                    ratios = self.get_batch_ratios([ticker])
+                    
+                    # Initialize results
+                    results = {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
+                    
+                    # Extract metrics
+                    if ticker in key_metrics:
+                        results['pe'] = key_metrics[ticker].get('pe')
+                        results['pb'] = key_metrics[ticker].get('pb')
+                    
+                    # Extract ratios
+                    if ticker in ratios:
+                        results['roe'] = ratios[ticker].get('roe')
+                        results['gm'] = ratios[ticker].get('gm')
+                    
+                    # Calculate dividend yield
+                    if ticker in profiles:
+                        last_div = profiles[ticker].get('last_div')
+                        price = profiles[ticker].get('price')
+                        
+                        if last_div is not None and price is not None and price > 0:
+                            results['dy'] = (last_div / price) * 100  # Convert to %
+                    
+                    # If P/B is still None, try to calculate it
+                    if results['pb'] is None:
+                        results['pb'] = self.get_pb_ratio(ticker)
+                    
+                    # Round values for readability
+                    fmp_results = {k: round(v, 2) if v is not None else None for k, v in results.items()}
+                    
+                    if any(v is not None for v in fmp_results.values()):
+                        logger.info(f"Successfully got fundamentals for {ticker} from FMP API")
+                        return fmp_results
+                        
+                except Exception as e:
+                    logger.error(f"Error getting FMP fundamentals for {ticker}: {e}")
+            
+            # If both methods failed, return Yahoo results (even if all None)
+            logger.warning(f"Limited fundamental data available for {ticker}")
+            return yahoo_fundamentals
+            
+        except Exception as e:
+            logger.error(f"Error getting enhanced fundamentals for {ticker}: {e}")
             return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
 
     def get_pb_ratio(self, ticker):
         """
-        Get P/B ratio for a stock from FMP API
+        Get P/B ratio with free alternatives
         
         Args:
             ticker: Stock symbol
@@ -393,18 +436,31 @@ class DataAcquisition:
             P/B ratio or None if unavailable
         """
         try:
-            # Try quarterly metrics first (more up-to-date)
-            url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?period=quarter&apikey={FMP_API_KEY}"
-            response = self._make_api_request(url)
+            # Method 1: Try Yahoo Finance first
+            yahoo_fundamentals = free_data_sources.get_stock_fundamentals_yahoo(ticker)
+            if yahoo_fundamentals.get('pb') is not None:
+                logger.debug(f"Got P/B ratio for {ticker} from Yahoo Finance")
+                return yahoo_fundamentals['pb']
             
-            if response and response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    # Prefer pbRatio (more frequently updated) over priceToBookRatio
-                    return data[0].get('pbRatio')
+            # Method 2: Try FMP API if not rate limited
+            if not self.fmp_rate_limit_exceeded:
+                # Try quarterly metrics first (more up-to-date)
+                url = f"https://financialmodelingprep.com/api/v3/key-metrics/{ticker}?period=quarter&apikey={FMP_API_KEY}"
+                response = self._make_api_request(url)
+                
+                if response and response.status_code == 200:
+                    data = response.json()
+                    if data and len(data) > 0:
+                        # Prefer pbRatio (more frequently updated) over priceToBookRatio
+                        pb_ratio = data[0].get('pbRatio')
+                        if pb_ratio is not None:
+                            logger.debug(f"Got P/B ratio for {ticker} from FMP API")
+                            return pb_ratio
+                
+                # If that fails, try to calculate it manually
+                return self.get_realtime_pb(ticker)
             
-            # If that fails, try to calculate it manually
-            return self.get_realtime_pb(ticker)
+            return None
             
         except Exception as e:
             logger.error(f"Error getting P/B ratio for {ticker}: {e}")
@@ -450,7 +506,7 @@ class DataAcquisition:
             
     def get_stock_profile(self, ticker):
         """
-        Get stock profile information from FMP API
+        Get stock profile information with free alternatives
         
         Args:
             ticker: Stock symbol
@@ -458,27 +514,42 @@ class DataAcquisition:
         Returns:
             Dictionary with stock profile information
         """
-        # For a single ticker, use the batch method with a list of one ticker
-        if isinstance(ticker, str):
-            try:
-                profiles = self.get_batch_profiles([ticker])
-                
-                if ticker in profiles:
-                    return profiles[ticker]
-                
-                return None
-                
-            except Exception as e:
-                logger.error(f"Error getting stock profile for {ticker}: {e}")
-                return None
-        else:
-            # If ticker is not a string (e.g., a list), return None
+        if not isinstance(ticker, str):
             logger.error(f"Invalid ticker format: {ticker}")
+            return None
+        
+        try:
+            # Method 1: Try Yahoo Finance first
+            logger.debug(f"Trying Yahoo Finance for profile of {ticker}")
+            yahoo_profile = free_data_sources.get_stock_profile_yahoo(ticker)
+            
+            if yahoo_profile and yahoo_profile.get('name'):
+                logger.info(f"Successfully got profile for {ticker} from Yahoo Finance")
+                return yahoo_profile
+            
+            # Method 2: Try FMP API only if not rate limited
+            if not self.fmp_rate_limit_exceeded:
+                logger.debug(f"Trying FMP API for profile of {ticker}")
+                try:
+                    profiles = self.get_batch_profiles([ticker])
+                    
+                    if ticker in profiles and profiles[ticker]:
+                        logger.info(f"Successfully got profile for {ticker} from FMP API")
+                        return profiles[ticker]
+                        
+                except Exception as e:
+                    logger.error(f"Error getting FMP profile for {ticker}: {e}")
+            
+            # Return Yahoo profile even if incomplete
+            return yahoo_profile if yahoo_profile else None
+            
+        except Exception as e:
+            logger.error(f"Error getting enhanced profile for {ticker}: {e}")
             return None
 
     def get_historical_data(self, ticker, from_date, to_date, interval='1day'):
         """
-        Get historical price data from FMP API or akshare for Chinese stocks
+        Get historical price data with free alternatives to avoid rate limits
         
         Args:
             ticker: Stock symbol
@@ -553,23 +624,49 @@ class DataAcquisition:
                     # Fall back to FMP API if akshare fails
                     is_chinese_stock = False
             
-            # If not a Chinese stock or akshare failed, use FMP API
+            # For non-Chinese stocks, try multiple free sources before FMP API
             if not is_chinese_stock:
-                # Map interval to FMP API parameter
-                if interval == '1week':
-                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
-                    is_weekly = True
-                    is_monthly = False
-                elif interval == '1month':
-                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
-                    is_weekly = False
-                    is_monthly = True
-                else:  # Default to daily
-                    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
-                    is_weekly = False
-                    is_monthly = False
+                # Method 1: Try yfinance first (most reliable and free)
+                logger.info(f"Trying yfinance for {ticker_str}")
+                yf_data = free_data_sources.get_historical_data_yfinance(
+                    ticker_str, from_date, to_date, interval
+                )
                 
-                response = self._make_api_request(url)
+                if not yf_data.empty:
+                    logger.info(f"Successfully fetched {ticker_str} data using yfinance")
+                    return yf_data
+                
+                # Method 2: Try pandas-datareader as fallback
+                logger.info(f"Trying pandas-datareader for {ticker_str}")
+                pdr_data = free_data_sources.get_historical_data_pandas_datareader(
+                    ticker_str, from_date, to_date
+                )
+                
+                if not pdr_data.empty:
+                    logger.info(f"Successfully fetched {ticker_str} data using pandas-datareader")
+                    return pdr_data
+                
+                # Method 3: Try FMP API only if not rate limited
+                if not self.fmp_rate_limit_exceeded:
+                    logger.info(f"Trying FMP API for {ticker_str}")
+                    # Map interval to FMP API parameter
+                    if interval == '1week':
+                        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
+                        is_weekly = True
+                        is_monthly = False
+                    elif interval == '1month':
+                        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
+                        is_weekly = False
+                        is_monthly = True
+                    else:  # Default to daily
+                        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}"
+                        is_weekly = False
+                        is_monthly = False
+                    
+                    response = self._make_api_request(url)
+                else:
+                    logger.warning(f"FMP API rate limited, skipping for {ticker_str}")
+                    response = None
             
             if response and response.status_code == 200:
                 data = response.json()
