@@ -114,14 +114,14 @@ class FreeDataSources:
             # Create yfinance ticker object
             stock = yf.Ticker(ticker)
             
-            # Download historical data
+            # Download historical data with error handling for rate limits
             hist_data = stock.history(
                 start=start_date,
                 end=end_date,
                 interval=yf_interval,
                 auto_adjust=True,  # Automatically adjust for splits and dividends
                 prepost=False,
-                threads=True
+                timeout=10  # Add timeout to prevent hanging
             )
             
             if hist_data.empty:
@@ -165,7 +165,7 @@ class FreeDataSources:
         """
         try:
             # Try multiple data sources in order of preference
-            sources = ['stooq', 'yahoo']  # Stooq is very reliable and free
+            sources = ['stooq']  # Focus on stooq as it's most reliable and free
             
             for source in sources:
                 try:

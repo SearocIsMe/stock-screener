@@ -1,0 +1,220 @@
+# Enhanced Data Configuration for Stock Screener
+# This configuration optimizes data collection and indicator calculation
+
+# Enhanced Data Collection Settings
+enhanced_data_collection:
+  enabled: true
+  
+  # Minimum data points required for reliable indicators
+  min_data_points:
+    daily: 60      # 2 months minimum for daily indicators
+    weekly: 52     # 1 year minimum for weekly indicators  
+    monthly: 24    # 2 years minimum for monthly indicators
+  
+  # Data collection periods (in days)
+  data_periods:
+    daily: 365     # 1 year for daily data
+    weekly: 1095   # 3 years for weekly data (365 * 3)
+    monthly: 1825  # 5 years for monthly data (365 * 5)
+  
+  # Maximum data collection periods (fallback)
+  max_data_periods:
+    daily: 1825    # 5 years maximum
+    weekly: 3650   # 10 years maximum
+    monthly: 7300  # 20 years maximum
+
+# Free Data Sources Priority
+free_data_sources:
+  enabled: true
+  
+  # Priority order for historical data (1 = highest priority)
+  historical_data_priority:
+    - yfinance          # Most reliable free source
+    - pandas_datareader # Multiple free sources (Stooq, Yahoo)
+    - enhanced_acquisition # Uses FMP API with free fallbacks
+  
+  # Priority order for fundamental data
+  fundamental_data_priority:
+    - yahoo_finance     # Free and comprehensive
+    - enhanced_acquisition # FMP API with free fallbacks
+  
+  # Rate limiting settings
+  rate_limits:
+    yfinance:
+      requests_per_second: 2
+      delay_between_requests: 0.5
+      max_retries: 3
+    
+    pandas_datareader:
+      requests_per_second: 1
+      delay_between_requests: 1.0
+      max_retries: 3
+    
+    akshare:
+      requests_per_second: 1
+      delay_between_requests: 1.0
+      max_retries: 3
+
+# Enhanced Technical Indicators Configuration
+enhanced_indicators:
+  # Minimum data requirements for each indicator
+  min_data_requirements:
+    ema: 30        # Need at least 30 points for EMA
+    bias: 30       # Need at least 30 points for BIAS
+    rsi: 30        # Need at least 30 points for RSI
+    macd: 50       # Need at least 50 points for MACD
+  
+  # Fallback strategies when insufficient data
+  fallback_strategies:
+    extend_date_range: true    # Try to get more historical data
+    use_shorter_periods: true  # Use shorter indicator periods if needed
+    skip_unreliable: true      # Skip indicators with insufficient data
+  
+  # Alternative indicator calculation methods
+  alternative_methods:
+    enabled: false  # Set to true to use external APIs for indicators
+    
+    # External APIs for technical indicators (free alternatives)
+    external_apis:
+      alpha_vantage:
+        enabled: false
+        api_key: "your_alpha_vantage_key"
+        rate_limit: 5  # requests per minute
+      
+      twelve_data:
+        enabled: false
+        api_key: "your_twelve_data_key"
+        rate_limit: 8  # requests per minute
+      
+      finnhub:
+        enabled: false
+        api_key: "your_finnhub_key"
+        rate_limit: 60  # requests per minute
+
+# Data Quality Settings
+data_quality:
+  # Validation rules
+  validation:
+    min_price: 0.01           # Minimum valid price
+    max_price: 1000000        # Maximum valid price
+    min_volume: 0             # Minimum valid volume
+    max_volume_spike: 100     # Maximum volume spike multiplier
+  
+  # Data cleaning rules
+  cleaning:
+    remove_outliers: true     # Remove price outliers
+    fill_missing_volume: true # Fill missing volume with 0
+    interpolate_gaps: true    # Interpolate small data gaps
+    max_gap_days: 5          # Maximum gap to interpolate (days)
+  
+  # Data completeness requirements
+  completeness:
+    min_completeness_ratio: 0.8  # Minimum 80% data completeness
+    required_columns: ['Open', 'High', 'Low', 'Close', 'Volume']
+
+# Performance Optimization
+performance:
+  # Caching settings
+  caching:
+    enabled: true
+    cache_duration_hours: 24
+    cache_indicators: true
+    cache_historical_data: true
+  
+  # Parallel processing
+  parallel_processing:
+    enabled: true
+    max_workers: 4
+    batch_size: 10
+  
+  # Memory management
+  memory_management:
+    max_memory_usage_mb: 1024
+    cleanup_interval_minutes: 30
+    gc_threshold: 100
+
+# Error Handling and Logging
+error_handling:
+  # Retry settings
+  retry_settings:
+    max_retries: 3
+    retry_delay_seconds: 2
+    exponential_backoff: true
+    max_backoff_seconds: 60
+  
+  # Logging settings
+  logging:
+    log_data_sources: true
+    log_performance_metrics: true
+    log_data_quality_issues: true
+    log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  
+  # Fallback behavior
+  fallback:
+    continue_on_error: true
+    skip_problematic_symbols: true
+    use_partial_data: false
+
+# Market-Specific Settings
+market_settings:
+  # US Markets
+  us_markets:
+    exchanges: ["NYSE", "NASDAQ", "AMEX"]
+    trading_hours:
+      start: "09:30"
+      end: "16:00"
+      timezone: "US/Eastern"
+    
+    # Data sources preference for US stocks
+    preferred_sources: ["yfinance", "pandas_datareader"]
+  
+  # Chinese Markets
+  chinese_markets:
+    exchanges: ["SSE", "SZSE", "BSE"]  # Shanghai, Shenzhen, Beijing
+    trading_hours:
+      start: "09:30"
+      end: "15:00"
+      timezone: "Asia/Shanghai"
+    
+    # Data sources preference for Chinese stocks
+    preferred_sources: ["akshare"]
+    
+    # Special handling for Chinese stocks
+    special_handling:
+      use_forward_adjustment: true  # Use qfq adjustment
+      handle_suspensions: true      # Handle trading suspensions
+      convert_currency: false       # Keep in CNY
+
+# Monitoring and Alerts
+monitoring:
+  # Performance monitoring
+  performance_monitoring:
+    enabled: true
+    track_response_times: true
+    track_success_rates: true
+    track_data_quality: true
+  
+  # Alerts
+  alerts:
+    enabled: true
+    
+    # Alert thresholds
+    thresholds:
+      high_failure_rate: 0.3      # Alert if >30% failures
+      slow_response_time: 10      # Alert if >10 seconds
+      low_data_quality: 0.7       # Alert if <70% data quality
+    
+    # Alert methods
+    methods:
+      log_alerts: true
+      email_alerts: false
+      webhook_alerts: false
+
+# Feature Flags
+feature_flags:
+  use_enhanced_stock_filter: true
+  use_free_data_sources: true
+  use_extended_date_ranges: true
+  use_data_quality_validation: true
+  use_performance_optimization: true
+  use_alternative_indicators: false

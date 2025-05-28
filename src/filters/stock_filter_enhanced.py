@@ -1,6 +1,5 @@
 """
-Stock filtering module for filtering stocks based on technical indicators
-Enhanced with free data sources and improved historical data handling
+Enhanced stock filtering module with free data sources and improved historical data handling
 """
 import os
 import json
@@ -30,11 +29,11 @@ config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 with open(config_path, "r") as config_file:
     config = yaml.safe_load(config_file)
 
-class StockFilter:
-    """Stock filtering class"""
+class EnhancedStockFilter:
+    """Enhanced stock filtering class with free data sources and improved data handling"""
     
     def __init__(self, db: Session):
-        """Initialize stock filter with database session"""
+        """Initialize enhanced stock filter with database session"""
         self.db = db
         self.redis = get_redis()
         self.data_acquisition = DataAcquisition(db)
@@ -57,11 +56,12 @@ class StockFilter:
     
     def filter_stocks(self, symbols=None, time_frames=None, custom_financial_thresholds=None):
         """
-        Filter stocks based on technical indicators
+        Enhanced filter stocks with better data handling and free sources
         
         Args:
             symbols: List of stock symbols or "all" for all symbols
             time_frames: List of time frames to filter (daily, weekly, monthly)
+            custom_financial_thresholds: Custom financial thresholds
         
         Returns:
             Dictionary of filtered stocks by symbol
@@ -114,7 +114,7 @@ class StockFilter:
         # Remove duplicates while preserving order
         all_stock_symbols = list(dict.fromkeys(all_stock_symbols))
         
-        logger.info(f"Processing {len(all_stock_symbols)} stock symbols for filtering")
+        logger.info(f"Processing {len(all_stock_symbols)} stock symbols for enhanced filtering")
         
         # Process each stock symbol
         filtered_results = {}
@@ -122,7 +122,7 @@ class StockFilter:
             try:
                 # Filter stock for each time frame
                 if '^' in symbol:
-                    logger.info(f"skip this {symbol} for processing")
+                    logger.debug(f"Skipping index symbol: {symbol}")
                     continue
 
                 symbol_results = {}
@@ -151,7 +151,8 @@ class StockFilter:
                     latest_indicators = TechnicalIndicators.get_latest_indicators(indicators_df, time_frame)
                     
                     # Apply filtering criteria
-                    if self._meets_criteria(latest_indicators, time_frame, symbol, stock=self.db.query(Stock).filter(Stock.symbol == symbol).first()):
+                    stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
+                    if self._meets_criteria(latest_indicators, time_frame, symbol, stock=stock):
                         # Store filtered result
                         result = self._store_filtered_result(symbol, latest_indicators, time_frame)
                         
@@ -185,28 +186,6 @@ class StockFilter:
         
         return filtered_results
 
-    def _get_financial_thresholds(self):
-        """Get financial thresholds from custom thresholds or config"""
-        if self.custom_financial_thresholds:
-            return {
-                "gross_margin": float(self.custom_financial_thresholds.get('gross_margin_threshold', 
-                                    config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3))),
-                "roe": float(self.custom_financial_thresholds.get('roe_threshold', 
-                           config.get('financial_metrics', {}).get('roe_threshold', 0.05))),
-                "rd_ratio": float(self.custom_financial_thresholds.get('rd_ratio_threshold', 
-                                config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7)))
-            }
-        else:
-            return {
-                "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
-                "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.05)),
-                "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7))
-            }
-    
-    def set_custom_financial_thresholds(self, thresholds):
-        """Set custom financial thresholds"""
-        self.custom_financial_thresholds = thresholds
-        logger.info(f"Set custom financial thresholds: {thresholds}")
     def _get_enhanced_historical_data(self, symbol, time_frame):
         """
         Enhanced historical data fetching with multiple free sources and sufficient data points
@@ -295,7 +274,7 @@ class StockFilter:
             # Map time frame to yfinance interval
             interval_map = {
                 'daily': '1d',
-                'weekly': '1wk',
+                'weekly': '1wk', 
                 'monthly': '1mo'
             }
             
@@ -309,7 +288,7 @@ class StockFilter:
                 if 'open' in data.columns:
                     data = data.rename(columns={
                         'open': 'Open',
-                        'high': 'High',
+                        'high': 'High', 
                         'low': 'Low',
                         'close': 'Close',
                         'volume': 'Volume'
@@ -334,7 +313,7 @@ class StockFilter:
                     data = data.rename(columns={
                         'open': 'Open',
                         'high': 'High',
-                        'low': 'Low',
+                        'low': 'Low', 
                         'close': 'Close',
                         'volume': 'Volume'
                     })
@@ -385,9 +364,9 @@ class StockFilter:
             
             # Fetch data using akshare
             df = ak.stock_zh_a_hist(
-                symbol=symbol,
+                symbol=symbol, 
                 period=period,
-                start_date=start_date_ak,
+                start_date=start_date_ak, 
                 end_date=end_date_ak,
                 adjust="qfq"  # Forward adjusted
             )
@@ -445,9 +424,32 @@ class StockFilter:
         except Exception as e:
             logger.error(f"Error converting data format: {e}")
             return data
-        
+
+    def _get_financial_thresholds(self):
+        """Get financial thresholds from custom thresholds or config"""
+        if self.custom_financial_thresholds:
+            return {
+                "gross_margin": float(self.custom_financial_thresholds.get('gross_margin_threshold', 
+                                    config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3))),
+                "roe": float(self.custom_financial_thresholds.get('roe_threshold', 
+                           config.get('financial_metrics', {}).get('roe_threshold', 0.05))),
+                "rd_ratio": float(self.custom_financial_thresholds.get('rd_ratio_threshold', 
+                                config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7)))
+            }
+        else:
+            return {
+                "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
+                "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.05)),
+                "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7))
+            }
+    
+    def set_custom_financial_thresholds(self, thresholds):
+        """Set custom financial thresholds"""
+        self.custom_financial_thresholds = thresholds
+        logger.info(f"Set custom financial thresholds: {thresholds}")
+
     def _store_filtered_result(self, symbol, indicators, time_frame):
-        """Store filtered result in database and Redis"""
+        """Store filtered result in database and Redis (same as original)"""
         try:
             # Get stock
             stock = self.db.query(Stock).filter(Stock.symbol == symbol).first()
@@ -543,16 +545,12 @@ class StockFilter:
                         "gross_margin": float(stock.gross_margin) if stock.gross_margin is not None else None,
                         "roe": float(stock.roe) if stock.roe is not None else None,
                         "rd_ratio": float(stock.rd_ratio) if stock.rd_ratio is not None else None,
-                        "thresholds": {
-                            "gross_margin": float(config.get('financial_metrics', {}).get('gross_margin_threshold', 0.3)),
-                            "roe": float(config.get('financial_metrics', {}).get('roe_threshold', 0.15)),
-                            "rd_ratio": float(config.get('financial_metrics', {}).get('rd_ratio_threshold', 0.7))
-                        }
+                        "thresholds": self._get_financial_thresholds()
                     }
                     
                     # Remove FinancialMetrics from time frames if they exist
                     for tf in filtered_data:
-                        if tf != "metaData" and tf != "FinancialMetrics" and "FinancialMetrics" in filtered_data[tf]:
+                        if tf != "metaData" and tf != "FinancialMetrics" and isinstance(filtered_data[tf], dict) and "FinancialMetrics" in filtered_data[tf]:
                             del filtered_data[tf]["FinancialMetrics"]
             else:
                 filtered_data = {
@@ -597,18 +595,9 @@ class StockFilter:
             self.db.rollback()
             logger.error(f"Error storing filtered result for {symbol}: {e}")
             return None
-    
+
     def get_filtered_stocks(self, time_frames=None, recent_days=1):
-        """
-        Get filtered stocks from Redis
-        
-        Args:
-            time_frames: List of time frames to filter (daily, weekly, monthly)
-            recent_days: Number of recent days to retrieve (0 for today)
-        
-        Returns:
-            Dictionary of filtered stocks
-        """
+        """Get filtered stocks from Redis (same as original)"""
         if not time_frames:
             time_frames = ["daily", "weekly", "monthly"]
         
@@ -673,7 +662,7 @@ class StockFilter:
         return filtered_stocks
 
     def _meets_criteria(self, indicators, time_frame, symbol, stock=None):
-        """Check if stock meets filtering criteria"""
+        """Check if stock meets filtering criteria (same as original)"""
         try:
             # Get configuration for the specified time frame
             ema_config = config['indicators']['ema'][time_frame]
