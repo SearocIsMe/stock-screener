@@ -555,3 +555,326 @@ stock-screener/
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+# Practice History
+
+28-May-2025
+Symbols       Price 
+"AEHR",  |         
+"FAASW", |
+"MKDWW", |
+"MTEN",  |
+"PDD",   |
+"TGTX",  |
+"HKD",   |
+"MNSO",  |
+"TAL"    |
+
+```
+{
+  "success": true,
+  "message": "Successfully retrieved 9 filtered stocks",
+  "data": {
+    "filtered_stocks": {
+      "AEHR": {
+        "metaData": {
+          "stock": "AEHR",
+          "filterTime": "2025-05-28T11:39:24.221785"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.47466,
+          "roe": 0.20943001,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -13.013971326631191
+          },
+          "RSI": {
+            "value": 37.603244145155,
+            "period": 14
+          },
+          "MACD": {
+            "value": -4.120975414521199,
+            "signal": -4.183518223642994,
+            "histogram": 0.062542809121795,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "FAASW": {
+        "metaData": {
+          "stock": "FAASW",
+          "filterTime": "2025-05-28T12:08:41.671771"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.96132004,
+          "roe": null,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -17.031230575951568
+          },
+          "RSI": {
+            "value": 44.82316136362099,
+            "period": 14
+          },
+          "MACD": {
+            "value": -0.002800177096418624,
+            "signal": -0.0029750810052140363,
+            "histogram": 0.0001749039087954123,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "MKDWW": {
+        "metaData": {
+          "stock": "MKDWW",
+          "filterTime": "2025-05-28T12:33:42.406077"
+        },
+        "FinancialMetrics": {
+          "gross_margin": null,
+          "roe": null,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -14.65835477051051
+          },
+          "RSI": {
+            "value": 50.51993553853027,
+            "period": 14
+          },
+          "MACD": {
+            "value": 0.008908118515123457,
+            "signal": 0.007996957570393847,
+            "histogram": 0.0009111609447296099,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "MTEN": {
+        "metaData": {
+          "stock": "MTEN",
+          "filterTime": "2025-05-28T12:35:33.736098"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.37345,
+          "roe": 0.085480005,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -20.134650758451947
+          },
+          "RSI": {
+            "value": 43.287629214066044,
+            "period": 14
+          },
+          "MACD": {
+            "value": -0.16617638221936115,
+            "signal": -0.22723633886542172,
+            "histogram": 0.061059956646060565,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "PDD": {
+        "metaData": {
+          "stock": "PDD",
+          "filterTime": "2025-05-28T12:45:22.905744"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.60923,
+          "roe": 0.44924,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -12.89230831536116
+          },
+          "RSI": {
+            "value": 41.19465946262712,
+            "period": 14
+          },
+          "MACD": {
+            "value": -4.014405137827396,
+            "signal": -4.940100985248686,
+            "histogram": 0.9256958474212906,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "TGTX": {
+        "metaData": {
+          "stock": "TGTX",
+          "filterTime": "2025-05-28T13:04:27.222899"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.88302004,
+          "roe": 0.122150004,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -18.827456659659305
+          },
+          "RSI": {
+            "value": 35.89373956093965,
+            "period": 14
+          },
+          "MACD": {
+            "value": -1.5661932280555968,
+            "signal": -1.6792458636530407,
+            "histogram": 0.11305263559744394,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "HKD": {
+        "metaData": {
+          "stock": "HKD",
+          "filterTime": "2025-05-28T13:23:49.278033"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 87.68,
+          "roe": 28.68,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -90.51218682566969
+          },
+          "RSI": {
+            "value": 45.46783204020632,
+            "period": 14
+          },
+          "MACD": {
+            "value": 53.75394282406036,
+            "signal": 52.04643466794741,
+            "histogram": 1.7075081561129508,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "MNSO": {
+        "metaData": {
+          "stock": "MNSO",
+          "filterTime": "2025-05-28T13:26:41.152023"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.44939998,
+          "roe": 0.26965,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -24.094639088893484
+          },
+          "RSI": {
+            "value": 37.03299708509926,
+            "period": 14
+          },
+          "MACD": {
+            "value": -0.9630539882495253,
+            "signal": -1.266919234261917,
+            "histogram": 0.30386524601239184,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      },
+      "TAL": {
+        "metaData": {
+          "stock": "TAL",
+          "filterTime": "2025-05-28T13:32:21.020974"
+        },
+        "FinancialMetrics": {
+          "gross_margin": null,
+          "roe": null,
+          "rd_ratio": null,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.05,
+            "rd_ratio": 0.1
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -16.2599047920218
+          },
+          "RSI": {
+            "value": 39.993888459788025,
+            "period": 14
+          },
+          "MACD": {
+            "value": -0.3825975613146353,
+            "signal": -0.40306996424409436,
+            "histogram": 0.020472402929459066,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        }
+      }
+    }
+  }
+}
+```
