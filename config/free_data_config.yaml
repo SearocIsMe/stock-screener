@@ -48,7 +48,7 @@ data_sources:
     threads: true          # Use threading for faster downloads
     
   pandas_datareader:
-    sources: ['stooq', 'yahoo']  # Try these sources in order
+    sources: ['yahoo']  #'stooq', 'yahoo' Try these sources in order
     
   yahoo_finance:
     timeout: 30

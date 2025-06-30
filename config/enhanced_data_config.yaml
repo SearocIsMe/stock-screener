@@ -28,9 +28,9 @@ free_data_sources:
   enabled: true
   
   # Priority order for historical data (1 = highest priority)
+  # - pandas_datareader # Multiple free sources (Stooq, Yahoo)
   historical_data_priority:
     - yfinance          # Most reliable free source
-    - pandas_datareader # Multiple free sources (Stooq, Yahoo)
     - enhanced_acquisition # Uses FMP API with free fallbacks
   
   # Priority order for fundamental data
@@ -166,7 +166,7 @@ market_settings:
       timezone: "US/Eastern"
     
     # Data sources preference for US stocks
-    preferred_sources: ["yfinance", "pandas_datareader"]
+    preferred_sources: ["yfinance"] # , "pandas_datareader"
   
   # Chinese Markets
   chinese_markets:
