@@ -28,6 +28,11 @@ config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 with open(config_path, "r") as config_file:
     config = yaml.safe_load(config_file)
 
+# Load free data configuration
+free_data_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "free_data_config.yaml")
+with open(free_data_config_path, "r") as free_config_file:
+    free_data_config = yaml.safe_load(free_config_file)
+
 # Constants
 REDIS_EXPIRATION = config["database"]["redis"]["expiration_days"] * 86400
 BATCH_SIZE = config["data_fetching"]["yfinance"]["batch_size"]
@@ -341,7 +346,7 @@ class EnhancedDataAcquisition:
 
     def get_fundamentals_enhanced(self, ticker):
         """
-        Enhanced fundamentals fetching with free alternatives
+        Enhanced fundamentals fetching with configurable free alternatives
         
         Args:
             ticker: Stock symbol
@@ -354,27 +359,69 @@ class EnhancedDataAcquisition:
             return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
         
         try:
-            # Method 1: Try Yahoo Finance first (free and reliable)
-            logger.debug(f"Trying Yahoo Finance for fundamentals of {ticker}")
-            yahoo_fundamentals = free_data_sources.get_stock_fundamentals_yahoo(ticker)
-            
-            # Check if we got meaningful data from Yahoo
-            if any(v is not None for v in yahoo_fundamentals.values()):
-                logger.info(f"Successfully got fundamentals for {ticker} from Yahoo Finance")
+            # Get priority list from configuration
+            if (free_data_config.get('free_data_sources', {}).get('enabled', False) and
+                'priority' in free_data_config['free_data_sources'] and
+                'fundamentals' in free_data_config['free_data_sources']['priority']):
+                
+                priority_sources = free_data_config['free_data_sources']['priority']['fundamentals']
+                logger.debug(f"Using configured priority sources for {ticker} fundamentals: {priority_sources}")
+                
+                # Try each source in priority order
+                for source in priority_sources:
+                    fundamentals = None
+                    
+                    if source == 'yahoo_finance':
+                        logger.debug(f"Trying Yahoo Finance for fundamentals of {ticker}")
+                        fundamentals = free_data_sources.get_stock_fundamentals_yahoo(ticker)
+                        source_name = 'Yahoo Finance'
+                    elif source == 'fmp_api':
+                        if not self.fmp_rate_limit_exceeded:
+                            logger.debug(f"Trying FMP API for fundamentals of {ticker}")
+                            fundamentals = self._get_fmp_fundamentals(ticker)
+                            source_name = 'FMP API'
+                        else:
+                            logger.debug(f"Skipping FMP API for {ticker} - rate limit exceeded")
+                            continue
+                    else:
+                        logger.warning(f"Unknown fundamentals source configured: {source}")
+                        continue
+                    
+                    # Check if we got meaningful data
+                    if fundamentals and any(v is not None for v in fundamentals.values()):
+                        logger.info(f"Successfully got fundamentals for {ticker} from {source_name}")
+                        return fundamentals
+                    else:
+                        logger.debug(f"No meaningful fundamentals data from {source_name} for {ticker}")
+            else:
+                # Fallback to original hardcoded order if config is not available
+                logger.warning("Free data config not available or disabled for fundamentals, using fallback order")
+                
+                # Method 1: Try Yahoo Finance first (free and reliable)
+                logger.debug(f"Trying Yahoo Finance for fundamentals of {ticker}")
+                yahoo_fundamentals = free_data_sources.get_stock_fundamentals_yahoo(ticker)
+                
+                # Check if we got meaningful data from Yahoo
+                if any(v is not None for v in yahoo_fundamentals.values()):
+                    logger.info(f"Successfully got fundamentals for {ticker} from Yahoo Finance")
+                    return yahoo_fundamentals
+                
+                # Method 2: Try FMP API only if not rate limited
+                if not self.fmp_rate_limit_exceeded:
+                    logger.debug(f"Trying FMP API for fundamentals of {ticker}")
+                    fmp_fundamentals = self._get_fmp_fundamentals(ticker)
+                    
+                    if any(v is not None for v in fmp_fundamentals.values()):
+                        logger.info(f"Successfully got fundamentals for {ticker} from FMP API")
+                        return fmp_fundamentals
+                
+                # If both methods failed, return Yahoo results (even if all None)
+                logger.warning(f"Limited fundamental data available for {ticker}")
                 return yahoo_fundamentals
             
-            # Method 2: Try FMP API only if not rate limited
-            if not self.fmp_rate_limit_exceeded:
-                logger.debug(f"Trying FMP API for fundamentals of {ticker}")
-                fmp_fundamentals = self._get_fmp_fundamentals(ticker)
-                
-                if any(v is not None for v in fmp_fundamentals.values()):
-                    logger.info(f"Successfully got fundamentals for {ticker} from FMP API")
-                    return fmp_fundamentals
-            
-            # If both methods failed, return Yahoo results (even if all None)
-            logger.warning(f"Limited fundamental data available for {ticker}")
-            return yahoo_fundamentals
+            # If all configured sources failed
+            logger.warning(f"All configured sources failed for {ticker} fundamentals")
+            return {'pb': None, 'pe': None, 'roe': None, 'dy': None, 'gm': None}
             
         except Exception as e:
             logger.error(f"Error getting enhanced fundamentals for {ticker}: {e}")
@@ -422,7 +469,7 @@ class EnhancedDataAcquisition:
 
     def get_stock_profile_enhanced(self, ticker):
         """
-        Enhanced stock profile fetching with free alternatives
+        Enhanced stock profile fetching with configurable free alternatives
         
         Args:
             ticker: Stock symbol
@@ -435,25 +482,69 @@ class EnhancedDataAcquisition:
             return None
         
         try:
-            # Method 1: Try Yahoo Finance first
-            logger.debug(f"Trying Yahoo Finance for profile of {ticker}")
-            yahoo_profile = free_data_sources.get_stock_profile_yahoo(ticker)
-            
-            if yahoo_profile and yahoo_profile.get('name'):
-                logger.info(f"Successfully got profile for {ticker} from Yahoo Finance")
-                return yahoo_profile
-            
-            # Method 2: Try FMP API only if not rate limited
-            if not self.fmp_rate_limit_exceeded:
-                logger.debug(f"Trying FMP API for profile of {ticker}")
-                fmp_profiles = self.get_batch_profiles([ticker])
+            # Get priority list from configuration
+            if (free_data_config.get('free_data_sources', {}).get('enabled', False) and
+                'priority' in free_data_config['free_data_sources'] and
+                'stock_profiles' in free_data_config['free_data_sources']['priority']):
                 
-                if ticker in fmp_profiles and fmp_profiles[ticker]:
-                    logger.info(f"Successfully got profile for {ticker} from FMP API")
-                    return fmp_profiles[ticker]
+                priority_sources = free_data_config['free_data_sources']['priority']['stock_profiles']
+                logger.debug(f"Using configured priority sources for {ticker} profile: {priority_sources}")
+                
+                # Try each source in priority order
+                for source in priority_sources:
+                    profile = None
+                    
+                    if source == 'yahoo_finance':
+                        logger.debug(f"Trying Yahoo Finance for profile of {ticker}")
+                        profile = free_data_sources.get_stock_profile_yahoo(ticker)
+                        source_name = 'Yahoo Finance'
+                    elif source == 'fmp_api':
+                        if not self.fmp_rate_limit_exceeded:
+                            logger.debug(f"Trying FMP API for profile of {ticker}")
+                            fmp_profiles = self.get_batch_profiles([ticker])
+                            if ticker in fmp_profiles and fmp_profiles[ticker]:
+                                profile = fmp_profiles[ticker]
+                            source_name = 'FMP API'
+                        else:
+                            logger.debug(f"Skipping FMP API for {ticker} - rate limit exceeded")
+                            continue
+                    else:
+                        logger.warning(f"Unknown stock profile source configured: {source}")
+                        continue
+                    
+                    # Check if we got meaningful data
+                    if profile and profile.get('name'):
+                        logger.info(f"Successfully got profile for {ticker} from {source_name}")
+                        return profile
+                    else:
+                        logger.debug(f"No meaningful profile data from {source_name} for {ticker}")
+            else:
+                # Fallback to original hardcoded order if config is not available
+                logger.warning("Free data config not available or disabled for stock profiles, using fallback order")
+                
+                # Method 1: Try Yahoo Finance first
+                logger.debug(f"Trying Yahoo Finance for profile of {ticker}")
+                yahoo_profile = free_data_sources.get_stock_profile_yahoo(ticker)
+                
+                if yahoo_profile and yahoo_profile.get('name'):
+                    logger.info(f"Successfully got profile for {ticker} from Yahoo Finance")
+                    return yahoo_profile
+                
+                # Method 2: Try FMP API only if not rate limited
+                if not self.fmp_rate_limit_exceeded:
+                    logger.debug(f"Trying FMP API for profile of {ticker}")
+                    fmp_profiles = self.get_batch_profiles([ticker])
+                    
+                    if ticker in fmp_profiles and fmp_profiles[ticker]:
+                        logger.info(f"Successfully got profile for {ticker} from FMP API")
+                        return fmp_profiles[ticker]
+                
+                # Return Yahoo profile even if incomplete
+                return yahoo_profile if yahoo_profile else None
             
-            # Return Yahoo profile even if incomplete
-            return yahoo_profile if yahoo_profile else None
+            # If all configured sources failed
+            logger.warning(f"All configured sources failed for {ticker} profile")
+            return None
             
         except Exception as e:
             logger.error(f"Error getting enhanced profile for {ticker}: {e}")

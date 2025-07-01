@@ -28,6 +28,11 @@ config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 with open(config_path, "r") as config_file:
     config = yaml.safe_load(config_file)
 
+# Load free data configuration
+free_data_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "free_data_config.yaml")
+with open(free_data_config_path, "r") as free_config_file:
+    free_data_config = yaml.safe_load(free_config_file)
+
 # Constants
 REDIS_EXPIRATION = config["database"]["redis"]["expiration_days"] * 86400  # Convert days to seconds
 BATCH_SIZE = config["data_fetching"]["yfinance"]["batch_size"]

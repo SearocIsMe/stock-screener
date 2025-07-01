@@ -87,10 +87,10 @@ class FreeDataSources:
         logger.error(f"All retry attempts failed for {url}")
         return None
 
-    def get_historical_data_yfinance(self, ticker: str, start_date: str, end_date: str, 
+    def get_historical_data_yfinance(self, ticker: str, start_date: str, end_date: str,
                                    interval: str = '1d') -> pd.DataFrame:
         """
-        Get historical data using yfinance (completely free)
+        Get historical data using yfinance with rate limiting and retry logic
         
         Args:
             ticker: Stock symbol
@@ -101,59 +101,101 @@ class FreeDataSources:
         Returns:
             DataFrame with historical price data
         """
-        try:
-            # Map interval formats
-            yf_interval = interval
-            if interval == '1day':
-                yf_interval = '1d'
-            elif interval == '1week':
-                yf_interval = '1wk'
-            elif interval == '1month':
-                yf_interval = '1mo'
+        max_retries = 3
+        base_delay = 2.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Add delay between requests to avoid rate limiting
+                if attempt > 0:
+                    delay = base_delay * (2 ** (attempt - 1)) + random.uniform(1, 3)
+                    logger.info(f"Rate limit retry {attempt}/{max_retries} for {ticker}, waiting {delay:.2f}s")
+                    time.sleep(delay)
+                else:
+                    # Always add a small delay to be respectful
+                    time.sleep(random.uniform(0.5, 1.5))
                 
-            # Create yfinance ticker object
-            stock = yf.Ticker(ticker)
-            
-            # Download historical data with error handling for rate limits
-            hist_data = stock.history(
-                start=start_date,
-                end=end_date,
-                interval=yf_interval,
-                auto_adjust=True,  # Automatically adjust for splits and dividends
-                prepost=False,
-                timeout=10  # Add timeout to prevent hanging
-            )
-            
-            if hist_data.empty:
-                logger.warning(f"No historical data found for {ticker}")
-                return pd.DataFrame()
+                # Map interval formats
+                yf_interval = interval
+                if interval == '1day':
+                    yf_interval = '1d'
+                elif interval == '1week':
+                    yf_interval = '1wk'
+                elif interval == '1month':
+                    yf_interval = '1mo'
+                    
+                # Create yfinance ticker object
+                stock = yf.Ticker(ticker)
                 
-            # Rename columns to match our schema
-            hist_data = hist_data.rename(columns={
-                'Open': 'open',
-                'High': 'high',
-                'Low': 'low',
-                'Close': 'close',
-                'Volume': 'volume'
-            })
-            
-            # Add adjusted_close (same as close when auto_adjust=True)
-            hist_data['adjusted_close'] = hist_data['close']
-            
-            # Sort by date (newest first)
-            hist_data = hist_data.sort_index(ascending=False)
-            
-            logger.info(f"Successfully fetched {len(hist_data)} records for {ticker}")
-            return hist_data
-            
-        except Exception as e:
-            logger.error(f"Error fetching historical data for {ticker} using yfinance: {e}")
-            return pd.DataFrame()
+                # Download historical data with error handling for rate limits
+                hist_data = stock.history(
+                    start=start_date,
+                    end=end_date,
+                    interval=yf_interval,
+                    auto_adjust=True,  # Automatically adjust for splits and dividends
+                    prepost=False,
+                    timeout=15  # Increased timeout
+                )
+                
+                if hist_data.empty:
+                    logger.warning(f"No historical data found for {ticker}")
+                    return pd.DataFrame()
+                    
+                # Rename columns to match our schema
+                hist_data = hist_data.rename(columns={
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                })
+                
+                # Add adjusted_close (same as close when auto_adjust=True)
+                hist_data['adjusted_close'] = hist_data['close']
+                
+                # Sort by date (newest first)
+                hist_data = hist_data.sort_index(ascending=False)
+                
+                logger.info(f"Successfully fetched {len(hist_data)} records for {ticker}")
+                return hist_data
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # Check if it's a rate limiting error
+                if any(phrase in error_msg for phrase in ['rate limit', 'too many requests', '429', 'throttle']):
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt) + random.uniform(2, 5)
+                        logger.warning(f"Rate limited for {ticker}, attempt {attempt + 1}/{max_retries + 1}, retrying in {delay:.2f}s")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error(f"Rate limit exceeded for {ticker} after {max_retries} retries: {e}")
+                        return pd.DataFrame()
+                
+                # Check if it's a timeout or connection error
+                elif any(phrase in error_msg for phrase in ['timeout', 'connection', 'network']):
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)
+                        logger.warning(f"Connection error for {ticker}, attempt {attempt + 1}/{max_retries + 1}, retrying in {delay:.2f}s")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error(f"Connection failed for {ticker} after {max_retries} retries: {e}")
+                        return pd.DataFrame()
+                
+                # For other errors, don't retry
+                else:
+                    logger.error(f"Error fetching historical data for {ticker} using yfinance: {e}")
+                    return pd.DataFrame()
+        
+        logger.error(f"All retry attempts failed for {ticker}")
+        return pd.DataFrame()
 
-    def get_historical_data_pandas_datareader(self, ticker: str, start_date: str, 
+    def get_historical_data_pandas_datareader(self, ticker: str, start_date: str,
                                             end_date: str) -> pd.DataFrame:
         """
-        Get historical data using pandas-datareader (free alternative)
+        Get historical data using pandas-datareader with enhanced timeout handling and retry logic
         
         Args:
             ticker: Stock symbol
@@ -163,49 +205,157 @@ class FreeDataSources:
         Returns:
             DataFrame with historical price data
         """
+        # Configuration for stooq retry mechanism
+        max_retry_duration = 3600  # 1 hour in seconds
+        retry_start_time = time.time()
+        base_delay = 5.0
+        max_delay = 300.0  # 5 minutes max delay
+        
+        # Track stooq availability
+        stooq_available = True
+        fallback_sources = ['yahoo']  # Fallback sources when stooq is down
+        
         try:
-            # Try multiple data sources in order of preference
-            sources = ['stooq']  # Focus on stooq as it's most reliable and free
+            # Primary attempt with stooq
+            sources_to_try = ['stooq'] if stooq_available else fallback_sources
             
-            for source in sources:
-                try:
-                    logger.info(f"Trying to fetch {ticker} data from {source}")
-                    
-                    # Fetch data from the source
-                    data = web.DataReader(
-                        ticker, 
-                        source, 
-                        start=pd.to_datetime(start_date),
-                        end=pd.to_datetime(end_date)
-                    )
-                    
-                    if not data.empty:
-                        # Standardize column names
-                        data.columns = [col.lower() for col in data.columns]
+            while time.time() - retry_start_time < max_retry_duration:
+                for source in sources_to_try:
+                    try:
+                        logger.info(f"Trying to fetch {ticker} data from {source}")
                         
-                        # Ensure we have the required columns
-                        required_cols = ['open', 'high', 'low', 'close', 'volume']
-                        for col in required_cols:
-                            if col not in data.columns:
-                                if col == 'volume':
-                                    data[col] = 0  # Set volume to 0 if not available
-                                elif col in ['open', 'high', 'low'] and 'close' in data.columns:
-                                    data[col] = data['close']  # Use close price as fallback
+                        # Set timeout for the request
+                        import socket
+                        original_timeout = socket.getdefaulttimeout()
+                        socket.setdefaulttimeout(30)  # 30 second timeout
+                        
+                        try:
+                            # Fetch data from the source
+                            data = web.DataReader(
+                                ticker,
+                                source,
+                                start=pd.to_datetime(start_date),
+                                end=pd.to_datetime(end_date)
+                            )
+                        finally:
+                            # Restore original timeout
+                            socket.setdefaulttimeout(original_timeout)
+                        
+                        if not data.empty:
+                            # Standardize column names
+                            data.columns = [col.lower() for col in data.columns]
+                            
+                            # Ensure we have the required columns
+                            required_cols = ['open', 'high', 'low', 'close', 'volume']
+                            for col in required_cols:
+                                if col not in data.columns:
+                                    if col == 'volume':
+                                        data[col] = 0  # Set volume to 0 if not available
+                                    elif col in ['open', 'high', 'low'] and 'close' in data.columns:
+                                        data[col] = data['close']  # Use close price as fallback
+                                        
+                            # Add adjusted_close
+                            data['adjusted_close'] = data['close']
+                            
+                            # Sort by date (newest first)
+                            data = data.sort_index(ascending=False)
+                            
+                            logger.info(f"Successfully fetched {len(data)} records for {ticker} from {source}")
+                            
+                            # If stooq worked, mark it as available
+                            if source == 'stooq' and not stooq_available:
+                                stooq_available = True
+                                logger.info(f"Stooq connection restored for {ticker}")
+                            
+                            return data
+                            
+                    except Exception as source_error:
+                        error_msg = str(source_error).lower()
+                        
+                        # Check if it's a stooq-specific timeout or connection error
+                        if source == 'stooq' and any(phrase in error_msg for phrase in
+                                                   ['timeout', 'connection', 'network', 'unreachable', 'refused']):
+                            
+                            if stooq_available:
+                                logger.warning(f"Stooq connection issue for {ticker}: {source_error}")
+                                logger.info(f"Marking stooq as unavailable, switching to fallback sources")
+                                stooq_available = False
+                                sources_to_try = fallback_sources
+                                continue  # Try fallback sources immediately
+                            else:
+                                # Calculate retry delay with exponential backoff
+                                elapsed_time = time.time() - retry_start_time
+                                remaining_time = max_retry_duration - elapsed_time
+                                
+                                if remaining_time > 0:
+                                    # Exponential backoff with jitter
+                                    retry_count = int(elapsed_time / 60)  # Rough retry count based on elapsed time
+                                    delay = min(base_delay * (2 ** min(retry_count, 6)), max_delay)
+                                    delay += random.uniform(0, delay * 0.1)  # Add jitter
                                     
-                        # Add adjusted_close
-                        data['adjusted_close'] = data['close']
-                        
-                        # Sort by date (newest first)
-                        data = data.sort_index(ascending=False)
-                        
-                        logger.info(f"Successfully fetched {len(data)} records for {ticker} from {source}")
-                        return data
-                        
-                except Exception as source_error:
-                    logger.warning(f"Failed to fetch {ticker} from {source}: {source_error}")
-                    continue
+                                    if delay < remaining_time:
+                                        logger.info(f"Stooq still unavailable for {ticker}, retrying in {delay:.1f}s "
+                                                  f"(remaining retry time: {remaining_time/60:.1f} minutes)")
+                                        time.sleep(delay)
+                                        sources_to_try = ['stooq']  # Try stooq again
+                                        break  # Break from source loop to retry stooq
+                                    else:
+                                        logger.warning(f"Not enough time remaining to retry stooq for {ticker}")
+                                        break
+                                else:
+                                    logger.warning(f"Retry time limit exceeded for stooq connection to {ticker}")
+                                    break
+                        else:
+                            logger.warning(f"Failed to fetch {ticker} from {source}: {source_error}")
+                            continue
+                
+                # If we've tried all sources in this iteration and none worked,
+                # and we're not retrying stooq, break the retry loop
+                if stooq_available or 'stooq' not in sources_to_try:
+                    break
                     
-            logger.warning(f"All data sources failed for {ticker}")
+            # Final attempt with all available fallback sources if stooq failed
+            if not stooq_available:
+                logger.info(f"Final attempt for {ticker} using all fallback sources")
+                for source in fallback_sources:
+                    try:
+                        logger.info(f"Final attempt: trying {source} for {ticker}")
+                        
+                        import socket
+                        original_timeout = socket.getdefaulttimeout()
+                        socket.setdefaulttimeout(30)
+                        
+                        try:
+                            data = web.DataReader(
+                                ticker,
+                                source,
+                                start=pd.to_datetime(start_date),
+                                end=pd.to_datetime(end_date)
+                            )
+                        finally:
+                            socket.setdefaulttimeout(original_timeout)
+                        
+                        if not data.empty:
+                            # Process data same as above
+                            data.columns = [col.lower() for col in data.columns]
+                            required_cols = ['open', 'high', 'low', 'close', 'volume']
+                            for col in required_cols:
+                                if col not in data.columns:
+                                    if col == 'volume':
+                                        data[col] = 0
+                                    elif col in ['open', 'high', 'low'] and 'close' in data.columns:
+                                        data[col] = data['close']
+                            data['adjusted_close'] = data['close']
+                            data = data.sort_index(ascending=False)
+                            
+                            logger.info(f"Successfully fetched {len(data)} records for {ticker} from fallback {source}")
+                            return data
+                            
+                    except Exception as fallback_error:
+                        logger.warning(f"Fallback source {source} failed for {ticker}: {fallback_error}")
+                        continue
+                        
+            logger.warning(f"All data sources failed for {ticker} after retry period")
             return pd.DataFrame()
             
         except Exception as e:

@@ -29,6 +29,11 @@ config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 with open(config_path, "r") as config_file:
     config = yaml.safe_load(config_file)
 
+# Load free data configuration
+free_data_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "free_data_config.yaml")
+with open(free_data_config_path, "r") as free_config_file:
+    free_data_config = yaml.safe_load(free_config_file)
+
 class EnhancedStockFilter:
     """Enhanced stock filtering class with free data sources and improved data handling"""
     
@@ -188,7 +193,7 @@ class EnhancedStockFilter:
 
     def _get_enhanced_historical_data(self, symbol, time_frame):
         """
-        Enhanced historical data fetching with multiple free sources and sufficient data points
+        Enhanced historical data fetching with configurable free sources and sufficient data points
         
         Args:
             symbol: Stock symbol
@@ -214,26 +219,65 @@ class EnhancedStockFilter:
             if is_chinese_stock:
                 return self._get_chinese_stock_data(symbol, time_frame, start_date, end_date)
             
-            # For non-Chinese stocks, try multiple free sources
+            # For non-Chinese stocks, use configured data sources
             logger.debug(f"Fetching enhanced historical data for {symbol} ({time_frame})")
             
-            # Method 1: Try yfinance first (most reliable)
-            yf_data = self._get_yfinance_data(symbol, time_frame, start_str, end_str)
-            if not yf_data.empty and len(yf_data) >= self.min_data_points.get(time_frame, 30):
-                logger.info(f"Successfully got {len(yf_data)} records for {symbol} from yfinance")
-                return yf_data
-            
-            # Method 2: Try pandas-datareader
-            pdr_data = self._get_pandas_datareader_data(symbol, start_str, end_str, time_frame)
-            if not pdr_data.empty and len(pdr_data) >= self.min_data_points.get(time_frame, 30):
-                logger.info(f"Successfully got {len(pdr_data)} records for {symbol} from pandas-datareader")
-                return pdr_data
-            
-            # Method 3: Try enhanced data acquisition (with FMP fallback)
-            enhanced_data = self.data_acquisition.get_historical_data(symbol, start_str, end_str, f'1{time_frame[0]}')
-            if not enhanced_data.empty and len(enhanced_data) >= self.min_data_points.get(time_frame, 30):
-                logger.info(f"Successfully got {len(enhanced_data)} records for {symbol} from enhanced acquisition")
-                return self._convert_to_yfinance_format(enhanced_data)
+            # Get priority list from configuration
+            if (free_data_config.get('free_data_sources', {}).get('enabled', False) and
+                'priority' in free_data_config['free_data_sources'] and
+                'historical_data' in free_data_config['free_data_sources']['priority']):
+                
+                priority_sources = free_data_config['free_data_sources']['priority']['historical_data']
+                logger.info(f"Using configured priority sources for {symbol}: {priority_sources}")
+                
+                # Try each source in priority order
+                for source in priority_sources:
+                    data = None
+                    
+                    if source == 'yfinance':
+                        data = self._get_yfinance_data(symbol, time_frame, start_str, end_str)
+                        source_name = 'yfinance'
+                    elif source == 'pandas_datareader':
+                        data = self._get_pandas_datareader_data(symbol, start_str, end_str, time_frame)
+                        source_name = 'pandas-datareader'
+                    elif source == 'fmp_api':
+                        data = self.data_acquisition.get_historical_data(symbol, start_str, end_str, f'1{time_frame[0]}')
+                        if not data.empty:
+                            data = self._convert_to_yfinance_format(data)
+                        source_name = 'FMP API'
+                    else:
+                        logger.warning(f"Unknown data source configured: {source}")
+                        continue
+                    
+                    # Check if we got sufficient data
+                    if not data.empty and len(data) >= self.min_data_points.get(time_frame, 30):
+                        logger.info(f"Successfully got {len(data)} records for {symbol} from {source_name}")
+                        return data
+                    elif not data.empty:
+                        logger.warning(f"Got {len(data)} records for {symbol} from {source_name}, but need at least {self.min_data_points.get(time_frame, 30)}")
+                    else:
+                        logger.warning(f"No data returned for {symbol} from {source_name}")
+            else:
+                # Fallback to original hardcoded order if config is not available
+                logger.warning("Free data config not available or disabled, using fallback order")
+                
+                # Method 1: Try yfinance first (most reliable)
+                yf_data = self._get_yfinance_data(symbol, time_frame, start_str, end_str)
+                if not yf_data.empty and len(yf_data) >= self.min_data_points.get(time_frame, 30):
+                    logger.info(f"Successfully got {len(yf_data)} records for {symbol} from yfinance")
+                    return yf_data
+                
+                # Method 2: Try pandas-datareader
+                pdr_data = self._get_pandas_datareader_data(symbol, start_str, end_str, time_frame)
+                if not pdr_data.empty and len(pdr_data) >= self.min_data_points.get(time_frame, 30):
+                    logger.info(f"Successfully got {len(pdr_data)} records for {symbol} from pandas-datareader")
+                    return pdr_data
+                
+                # Method 3: Try enhanced data acquisition (with FMP fallback)
+                enhanced_data = self.data_acquisition.get_historical_data(symbol, start_str, end_str, f'1{time_frame[0]}')
+                if not enhanced_data.empty and len(enhanced_data) >= self.min_data_points.get(time_frame, 30):
+                    logger.info(f"Successfully got {len(enhanced_data)} records for {symbol} from enhanced acquisition")
+                    return self._convert_to_yfinance_format(enhanced_data)
             
             # If we still don't have enough data, try extending the date range
             if days_needed < 365 * 10:  # Don't go beyond 10 years
