@@ -93,6 +93,54 @@ class StockFilter:
         if symbols is None:
             symbols = [stock.symbol for stock in self.db.query(Stock).all()]
         
+        # Preprocess symbols - check if any are exchange names that need expansion
+        processed_symbols = []
+        
+        # Load exchange definitions from config
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'config.yaml')
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        exchange_names = config.get('exchanges', [])
+        
+        for symbol in symbols:
+            if symbol in exchange_names:
+                logger.info(f"Expanding exchange symbol: {symbol}")
+                
+                if symbol == 'SP500':
+                    # Use free data sources to get SP500 symbols
+                    free_sources = FreeDataSources()
+                    sp500_symbols = free_sources.get_sp500_symbols_free()
+                    processed_symbols.extend(sp500_symbols)
+                    logger.info(f"Added {len(sp500_symbols)} SP500 symbols")
+                    
+                elif symbol in ['NASDAQ', 'NYSE', 'AMEX', 'ACN']:
+                    # Read from CSV files in config directory
+                    csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', f'{symbol}.csv')
+                    if os.path.exists(csv_path):
+                        try:
+                            df = pd.read_csv(csv_path)
+                            # Assume the first column contains symbols, or look for 'Symbol' column
+                            if 'Symbol' in df.columns:
+                                exchange_symbols = df['Symbol'].dropna().tolist()
+                            else:
+                                exchange_symbols = df.iloc[:, 0].dropna().tolist()
+                            
+                            processed_symbols.extend(exchange_symbols)
+                            logger.info(f"Added {len(exchange_symbols)} {symbol} symbols from CSV")
+                        except Exception as e:
+                            logger.error(f"Error reading {symbol} CSV file: {e}")
+                    else:
+                        logger.warning(f"CSV file not found for exchange: {symbol}")
+                        
+            else:
+                # Regular symbol, add as-is
+                processed_symbols.append(symbol)
+        
+        # Remove duplicates while preserving order
+        symbols = list(dict.fromkeys(processed_symbols))
+        logger.info(f"Total symbols to process after expansion: {len(symbols)}")
+        
         results = {}
         
         for time_frame in time_frames:

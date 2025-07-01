@@ -5,10 +5,10 @@ free_data_sources:
   enabled: true
   
   # Priority order for data sources (1 = highest priority)
-  #       - yahoo_finance     # Priority 1: Free and comprehensive
+  #    - yahoo_finance     # Priority 1: Free and comprehensive
+  #    - pandas_datareader # Priority 2: Multiple free sources
   priority:
     historical_data:
-      - pandas_datareader # Priority 2: Multiple free sources
       - fmp_api           # Priority 3: Paid API (fallback)
     
     fundamentals:
