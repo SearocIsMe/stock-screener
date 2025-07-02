@@ -297,47 +297,66 @@ async def retrieve_filtered_stocks(
                 )
             elif job_data["status"] == "done":
                 # Get filtered stocks from job result
-                filtered_stocks = job_data["result"]["filtered_stocks"]
+                filtered_stocks_raw = job_data["result"]["filtered_stocks"]
                 
                 # Apply AND operation for multiple timeframes if timeFrame is provided
                 if request.timeFrame:
-                    # Filter stocks that have all the requested timeframes
-                    filtered_stocks = {
-                        symbol: data for symbol, data in filtered_stocks.items()
-                        if all(tf in data for tf in request.timeFrame) and 
-                           "metaData" in data and 
-                           "FinancialMetrics" in data
-                    }
+                    # Find stocks that appear in ALL requested timeframes
+                    symbol_timeframe_map = {}
                     
-                    # For each stock, only include the requested timeframes
-                    for symbol, data in filtered_stocks.items():
-                        # Create a new data structure with only the requested timeframes
-                        filtered_data = {
-                            "metaData": data["metaData"],
-                            "FinancialMetrics": data["FinancialMetrics"]
-                        }
+                    # Build a map of symbols to their timeframes
+                    for timeframe, stocks in filtered_stocks_raw.items():
+                        if timeframe in request.timeFrame:
+                            for stock in stocks:
+                                symbol = stock["symbol"]
+                                if symbol not in symbol_timeframe_map:
+                                    symbol_timeframe_map[symbol] = {}
+                                symbol_timeframe_map[symbol][timeframe] = stock
+                    
+                    # Filter to only include stocks that have ALL requested timeframes
+                    filtered_symbols = []
+                    for symbol, timeframes in symbol_timeframe_map.items():
+                        if all(tf in timeframes for tf in request.timeFrame):
+                            filtered_symbols.append(symbol)
+                    
+                    # Build the final result structure
+                    if request.stockNameOnly:
+                        return ApiResponse(
+                            success=True,
+                            message=f"Successfully retrieved {len(filtered_symbols)} filtered stocks",
+                            data={"filtered_stocks": filtered_symbols}
+                        )
+                    else:
+                        # Return detailed data for stocks that meet all timeframe criteria
+                        result_data = {}
+                        for symbol in filtered_symbols:
+                            result_data[symbol] = symbol_timeframe_map[symbol]
                         
-                        # Add only the requested timeframes
-                        for tf in request.timeFrame:
-                            if tf in data:
-                                filtered_data[tf] = data[tf]
+                        return ApiResponse(
+                            success=True,
+                            message=f"Successfully retrieved {len(result_data)} filtered stocks",
+                            data={"filtered_stocks": result_data}
+                        )
+                else:
+                    # No specific timeframes requested, return all data
+                    if request.stockNameOnly:
+                        # Extract all unique symbols from all timeframes
+                        all_symbols = set()
+                        for timeframe, stocks in filtered_stocks_raw.items():
+                            for stock in stocks:
+                                all_symbols.add(stock["symbol"])
                         
-                        # Replace the original data with the filtered data
-                        filtered_stocks[symbol] = filtered_data
-                
-                # Return only stock names if requested
-                if request.stockNameOnly:
-                    return ApiResponse(
-                        success=True,
-                        message=f"Successfully retrieved {len(filtered_stocks)} filtered stocks",
-                        data={"filtered_stocks": list(filtered_stocks.keys())}
-                    )
-                
-                return ApiResponse(
-                    success=True,
-                    message=f"Successfully retrieved {len(filtered_stocks)} filtered stocks",
-                    data={"filtered_stocks": filtered_stocks}
-                )
+                        return ApiResponse(
+                            success=True,
+                            message=f"Successfully retrieved {len(all_symbols)} filtered stocks",
+                            data={"filtered_stocks": list(all_symbols)}
+                        )
+                    else:
+                        return ApiResponse(
+                            success=True,
+                            message=f"Successfully retrieved filtered stocks",
+                            data={"filtered_stocks": filtered_stocks_raw}
+                        )
         
         # If no job_id is provided, use the old method
         if not request.timeFrame:

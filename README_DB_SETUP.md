@@ -40,6 +40,70 @@ This document provides instructions on how to set up the PostgreSQL database for
    # Enter your desired password (default in config is 'postgres')
    postgres=# \q
    ```
+### Add user stock_user and set Password
+Step 1: Switch to PostgreSQL's Administrative User
+   PostgreSQL uses postgres as its default superuser. First, switch to it:
+
+   ```bash
+   sudo -u postgres psql
+   (Or log in directly: sudo -i -u postgres psql)
+   ```
+
+Step 2: Create the User (stock_user)
+Inside the PostgreSQL shell (psql), run:
+
+```sql
+CREATE USER stock_user WITH PASSWORD 'your_password_here';
+Replace your_password_here with a strong password.
+```
+
+Step 3: Grant Permissions
+Option A: Basic Permissions
+```sql
+-- Grant login rights
+ALTER USER stock_user WITH LOGIN;
+-- Grant permission to create databases (optional)
+ALTER USER stock_user CREATEDB;
+-- Grant permission to create roles (optional)
+ALTER USER stock_user CREATEROLE;
+Option B: Full Database Access
+If you want stock_user to own a database:
+```
+
+```sql
+-- Create a database and assign ownership
+CREATE DATABASE stock_db OWNER stock_user;
+Option C: Grant Specific Privileges
+To give stock_user access to an existing database (e.g., stock_db):
+```
+```sql
+GRANT ALL PRIVILEGES ON DATABASE stock_db TO stock_user;
+```
+Step 4: Verify the User
+
+++ List all users
+
+```txt
+\du
+-- List databases and ownerships
+\l
+Step 5: (Optional) Allow Remote Access
+Edit /etc/postgresql/14/main/pg_hba.conf (adjust 14 for your version):
+```
+
+```bash
+# Add this line to allow password-based access
+host    all             stock_user         0.0.0.0/0               scram-sha-255
+
+Then restart PostgreSQL:
+sudo systemctl restart postgresql
+```
+
+Step 6: Connect as stock_user
+```bash
+psql -U stock_user -d stock_db -h localhost
+(Enter the password when prompted.)
+```
 
 ### Installing Redis in WSL
 
