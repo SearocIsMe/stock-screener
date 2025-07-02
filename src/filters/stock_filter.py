@@ -536,12 +536,84 @@ class StockFilter:
             # Get financial thresholds
             thresholds = self._get_financial_thresholds()
             
-            # Technical indicator criteria
-            rsi = indicators.get('rsi', 50)
-            macd_signal = indicators.get('macd_signal', 0)
-            bollinger_position = indicators.get('bollinger_position', 0.5)
-            volume_sma_ratio = indicators.get('volume_sma_ratio', 1.0)
-            price_sma_ratio = indicators.get('price_sma_ratio', 1.0)
+            # Extract latest indicator values from DataFrame
+            if indicators.empty:
+                logger.warning(f"No indicators available for {symbol}")
+                return False
+            
+            # Get the most recent row (latest date)
+            latest = indicators.iloc[-1]
+            
+            # Get configuration for the time frame
+            rsi_config = config['indicators']['rsi'][time_frame]
+            macd_config = config['indicators']['macd'][time_frame]
+            
+            # Extract technical indicator values from the latest row
+            rsi_col = f'RSI_{rsi_config["period"]}'
+            macd_signal_col = 'MACD_Signal'
+            macd_col = 'MACD'
+            
+            # Get RSI value
+            rsi = latest.get(rsi_col, None)
+            if rsi is None or pd.isna(rsi):
+                logger.debug(f"{symbol}: RSI not available")
+                return False
+            
+            # Get MACD signal value
+            macd_signal = latest.get(macd_signal_col, None)
+            if macd_signal is None or pd.isna(macd_signal):
+                logger.debug(f"{symbol}: MACD signal not available")
+                return False
+            
+            # Get MACD value for additional checks
+            macd = latest.get(macd_col, None)
+            if macd is None or pd.isna(macd):
+                logger.debug(f"{symbol}: MACD not available")
+                return False
+            
+            # Calculate volume ratio (current volume vs recent average)
+            volume_sma_ratio = 1.0  # Default if not calculated
+            if 'Volume' in indicators.columns and len(indicators) >= 20:
+                # Calculate 20-period volume SMA
+                volume_sma = indicators['Volume'].rolling(window=20).mean().iloc[-1]
+                current_volume = latest['Volume']
+                if not pd.isna(volume_sma) and not pd.isna(current_volume) and volume_sma > 0:
+                    volume_sma_ratio = current_volume / volume_sma
+            
+            # Calculate price vs EMA ratio
+            price_sma_ratio = 1.0   # Default if not calculated
+            ema_config = config['indicators']['ema'][time_frame]
+            if ema_config['periods']:
+                ema_period = ema_config['periods'][0]  # Use first EMA period
+                ema_col = f'EMA_{ema_period}_Close'
+                if ema_col in latest.index and 'Close' in latest.index:
+                    if not pd.isna(latest[ema_col]) and not pd.isna(latest['Close']) and latest[ema_col] > 0:
+                        price_sma_ratio = latest['Close'] / latest[ema_col]
+            
+            # Calculate Bollinger Bands position if we have enough data
+            bollinger_position = 0.5  # Default middle position
+            if 'Close' in indicators.columns and len(indicators) >= 20:
+                # Calculate 20-period Bollinger Bands
+                close_prices = indicators['Close']
+                bb_period = 20
+                bb_std = 2
+                
+                sma_20 = close_prices.rolling(window=bb_period).mean()
+                std_20 = close_prices.rolling(window=bb_period).std()
+                
+                upper_band = sma_20 + (std_20 * bb_std)
+                lower_band = sma_20 - (std_20 * bb_std)
+                
+                # Get latest values
+                latest_close = latest['Close']
+                latest_upper = upper_band.iloc[-1]
+                latest_lower = lower_band.iloc[-1]
+                latest_middle = sma_20.iloc[-1]
+                
+                if not pd.isna(latest_upper) and not pd.isna(latest_lower) and latest_upper != latest_lower:
+                    # Position between 0 (at lower band) and 1 (at upper band)
+                    bollinger_position = (latest_close - latest_lower) / (latest_upper - latest_lower)
+                    bollinger_position = max(0, min(1, bollinger_position))  # Clamp between 0 and 1
             
             # RSI criteria (not oversold, not overbought)
             if rsi < 30 or rsi > 70:
@@ -571,10 +643,16 @@ class StockFilter:
             # Additional criteria for different time frames
             if time_frame in ['weekly', 'monthly']:
                 # More stringent criteria for longer time frames
-                adx = indicators.get('adx', 0)
-                if adx < 25:  # Strong trend required
-                    logger.debug(f"{symbol}: ADX {adx} indicates weak trend for {time_frame}")
-                    return False
+                # Try to get ADX if available (would need to be calculated separately)
+                adx = None
+                if 'ADX' in latest.index:
+                    adx = latest.get('ADX', None)
+                    if adx is not None and not pd.isna(adx) and adx < 25:
+                        logger.debug(f"{symbol}: ADX {adx} indicates weak trend for {time_frame}")
+                        return False
+                else:
+                    # If ADX is not available, we can skip this check or use alternative trend indicators
+                    logger.debug(f"{symbol}: ADX not available for {time_frame} trend analysis")
             
             # Get financial data if available
             if stock:
