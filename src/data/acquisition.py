@@ -522,11 +522,11 @@ class DataAcquisition:
         """Get historical data from FMP API"""
         try:
             # Map interval to FMP API parameter
-            if interval == '1week':
+            if interval == '1w':
                 url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
                 is_weekly = True
                 is_monthly = False
-            elif interval == '1month':
+            elif interval == '1m':
                 url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker_str}?from={from_date}&to={to_date}&apikey={FMP_API_KEY}&serietype=line"
                 is_weekly = False
                 is_monthly = True
@@ -563,10 +563,14 @@ class DataAcquisition:
                     required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
                     for col in required_columns:
                         if col not in df.columns:
-                            if col == 'Adj Close' and 'Close' in df.columns:
-                                df['Adj Close'] = df['Close']
-                            else:
-                                df[col] = 0
+                            df[col] = 0
+                    
+                    # Ensure Adj Close exists (needed for resampling)
+                    if 'Adj Close' not in df.columns:
+                        if 'Close' in df.columns:
+                            df['Adj Close'] = df['Close']
+                        else:
+                            df['Adj Close'] = 0
                     
                     # Convert weekly/monthly if needed
                     if is_weekly:
