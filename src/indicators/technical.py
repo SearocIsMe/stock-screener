@@ -141,6 +141,9 @@ class TechnicalIndicators:
         ema_config = config['indicators']['ema'][time_frame]
         rsi_config = config['indicators']['rsi'][time_frame]
         macd_config = config['indicators']['macd'][time_frame]
+        ma_config = config['indicators']['ma'][time_frame]
+        bollinger_config = config['indicators']['bollinger'][time_frame]
+        dmi_config = config['indicators']['dmi'][time_frame]
         
         # Create a copy of the data to avoid modifying the original
         df = data.copy()
@@ -155,13 +158,18 @@ class TechnicalIndicators:
             bias_col = f'BIAS_{period}_Close'
             df[bias_col] = (df['Close'] - df[ema_col]) / df[ema_col] * 100
         
+        # Calculate Simple Moving Averages (MA)
+        for period in ma_config['periods']:
+            ma_col = f'MA_{period}'
+            df[ma_col] = df.ta.sma(close='Close', length=period)
+        
         # Calculate RSI
         rsi_period = rsi_config['period']
         df[f'RSI_{rsi_period}'] = df.ta.rsi(close='Close', length=rsi_period)
         
         # Calculate MACD
         macd = df.ta.macd(
-            close='Close', 
+            close='Close',
             fast=macd_config['fast_period'],
             slow=macd_config['slow_period'],
             signal=macd_config['signal_period']
@@ -173,11 +181,45 @@ class TechnicalIndicators:
         df['MACD_Signal'] = macd[f'MACDs_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
         df['MACD_Histogram'] = macd[f'MACDh_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
         
+        # Calculate Bollinger Bands
+        bb_period = bollinger_config['period']
+        bb_std = bollinger_config['std_dev']
+        bb = df.ta.bbands(close='Close', length=bb_period, std=bb_std)
+        if bb is not None and not bb.empty:
+            df['BB_Lower'] = bb[f'BBL_{bb_period}_{bb_std}.0']
+            df['BB_Middle'] = bb[f'BBM_{bb_period}_{bb_std}.0']
+            df['BB_Upper'] = bb[f'BBU_{bb_period}_{bb_std}.0']
+            df['BB_Width'] = df['BB_Upper'] - df['BB_Lower']
+            df['BB_Position'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
+        
+        # Calculate OBV (On-Balance Volume)
+        df['OBV'] = df.ta.obv(close='Close', volume='Volume')
+        
+        # Calculate DMI (Directional Movement Index)
+        dmi_period = dmi_config['period']
+        dmi = df.ta.dm(high='High', low='Low', close='Close', length=dmi_period)
+        if dmi is not None and not dmi.empty:
+            df['DMP'] = dmi[f'DMP_{dmi_period}']  # Positive Directional Movement
+            df['DMN'] = dmi[f'DMN_{dmi_period}']  # Negative Directional Movement
+        
+        # Calculate ADX (Average Directional Index)
+        adx = df.ta.adx(high='High', low='Low', close='Close', length=dmi_period)
+        if adx is not None and not adx.empty:
+            df['ADX'] = adx[f'ADX_{dmi_period}']
+            df['DI_Plus'] = adx[f'DMP_{dmi_period}']
+            df['DI_Minus'] = adx[f'DMN_{dmi_period}']
+        
+        # Calculate additional indicators for comprehensive analysis
+        df['ATR'] = df.ta.atr(high='High', low='Low', close='Close', length=14)
+        df['Stochastic_K'] = df.ta.stoch(high='High', low='Low', close='Close')['STOCHk_14_3_3']
+        df['Stochastic_D'] = df.ta.stoch(high='High', low='Low', close='Close')['STOCHd_14_3_3']
+        df['Williams_R'] = df.ta.willr(high='High', low='Low', close='Close', length=14)
+        
         # Log the calculated indicators
         if cls.calucated_amount > 100:
-            logger.debug(f"{cls.calucated_amount} stocks are calculated indicators for {time_frame} timeframe: {', '.join(df.columns[df.columns.str.contains('EMA|BIAS|RSI|MACD')])}")
+            logger.debug(f"{cls.calucated_amount} stocks are calculated indicators for {time_frame} timeframe: {', '.join(df.columns[df.columns.str.contains('EMA|BIAS|RSI|MACD|MA_|BB_|OBV|DM|ADX')])}")
             cls.calucated_amount = 1
-        else:  
+        else:
             cls.calucated_amount += 1
         
         return df
@@ -229,4 +271,339 @@ class TechnicalIndicators:
         is_uptrend, duration = cls.check_uptrend_duration(df, ema_period, min_slope, min_weeks)
         
         return df, is_uptrend, duration
-        return data.iloc[-1:].copy()
+    
+    @staticmethod
+    def check_macd_golden_cross(data, lookback_periods=3):
+        """
+        Check if MACD just formed a golden cross (MACD line crosses above signal line)
+        
+        Args:
+            data: DataFrame with MACD and MACD_Signal columns
+            lookback_periods: Number of periods to look back for recent golden cross
+            
+        Returns:
+            bool: True if golden cross occurred recently
+        """
+        if data.empty or len(data) < lookback_periods + 1:
+            return False
+        
+        if 'MACD' not in data.columns or 'MACD_Signal' not in data.columns:
+            return False
+        
+        # Check recent periods for golden cross
+        recent_data = data.tail(lookback_periods + 1)
+        
+        for i in range(1, len(recent_data)):
+            prev_macd = recent_data['MACD'].iloc[i-1]
+            prev_signal = recent_data['MACD_Signal'].iloc[i-1]
+            curr_macd = recent_data['MACD'].iloc[i]
+            curr_signal = recent_data['MACD_Signal'].iloc[i]
+            
+            # Check if MACD crossed above signal line
+            if (prev_macd <= prev_signal and curr_macd > curr_signal and
+                not pd.isna(prev_macd) and not pd.isna(prev_signal) and
+                not pd.isna(curr_macd) and not pd.isna(curr_signal)):
+                return True
+        
+        return False
+    
+    @staticmethod
+    def check_macd_near_golden_cross(data, threshold=0.1):
+        """
+        Check if MACD is approaching golden cross (MACD line close to signal line from below)
+        
+        Args:
+            data: DataFrame with MACD and MACD_Signal columns
+            threshold: Threshold for "close" (as percentage of signal line)
+            
+        Returns:
+            bool: True if MACD is approaching golden cross
+        """
+        if data.empty or 'MACD' not in data.columns or 'MACD_Signal' not in data.columns:
+            return False
+        
+        latest = data.iloc[-1]
+        macd = latest['MACD']
+        signal = latest['MACD_Signal']
+        
+        if pd.isna(macd) or pd.isna(signal) or signal == 0:
+            return False
+        
+        # Check if MACD is below but close to signal line
+        if macd < signal:
+            diff_pct = abs(macd - signal) / abs(signal)
+            return diff_pct <= threshold
+        
+        return False
+    
+    @staticmethod
+    def check_three_consecutive_green_candles(data):
+        """
+        Check if there are 3 consecutive green (bullish) candles
+        
+        Args:
+            data: DataFrame with Open and Close columns
+            
+        Returns:
+            bool: True if last 3 candles are green
+        """
+        if data.empty or len(data) < 3:
+            return False
+        
+        if 'Open' not in data.columns or 'Close' not in data.columns:
+            return False
+        
+        # Check last 3 candles
+        recent_data = data.tail(3)
+        
+        for _, row in recent_data.iterrows():
+            if pd.isna(row['Open']) or pd.isna(row['Close']) or row['Close'] <= row['Open']:
+                return False
+        
+        return True
+    
+    @staticmethod
+    def check_bollinger_squeeze_expansion(data, squeeze_threshold=0.1, expansion_threshold=0.2):
+        """
+        Check if Bollinger Bands had a squeeze and then expanded upward
+        
+        Args:
+            data: DataFrame with Bollinger Bands columns
+            squeeze_threshold: Threshold for identifying squeeze (BB_Width relative to price)
+            expansion_threshold: Threshold for identifying expansion
+            
+        Returns:
+            bool: True if squeeze followed by upward expansion occurred
+        """
+        if data.empty or len(data) < 10:
+            return False
+        
+        required_cols = ['BB_Width', 'Close', 'BB_Upper', 'BB_Middle']
+        if not all(col in data.columns for col in required_cols):
+            return False
+        
+        recent_data = data.tail(10)
+        
+        # Find squeeze periods (low BB_Width relative to price)
+        recent_data = recent_data.copy()
+        recent_data['BB_Width_Pct'] = recent_data['BB_Width'] / recent_data['Close']
+        
+        # Look for squeeze followed by expansion
+        squeeze_found = False
+        for i in range(len(recent_data) - 3):
+            # Check for squeeze
+            if recent_data['BB_Width_Pct'].iloc[i] < squeeze_threshold:
+                squeeze_found = True
+                
+                # Check for subsequent expansion with upward breakout
+                for j in range(i + 1, min(i + 4, len(recent_data))):
+                    if (recent_data['BB_Width_Pct'].iloc[j] > expansion_threshold and
+                        recent_data['Close'].iloc[j] > recent_data['BB_Middle'].iloc[j]):
+                        return True
+        
+        return False
+    
+    @staticmethod
+    def check_rsi_momentum_50_to_60(data, rsi_period=14):
+        """
+        Check if RSI is moving from 50 towards 60 (upward momentum)
+        
+        Args:
+            data: DataFrame with RSI column
+            rsi_period: RSI period to check
+            
+        Returns:
+            bool: True if RSI shows upward momentum from 50 towards 60
+        """
+        if data.empty or len(data) < 3:
+            return False
+        
+        rsi_col = f'RSI_{rsi_period}'
+        if rsi_col not in data.columns:
+            return False
+        
+        recent_rsi = data[rsi_col].tail(3).dropna()
+        if len(recent_rsi) < 3:
+            return False
+        
+        # Check if RSI is in the 50-60 range and trending upward
+        latest_rsi = recent_rsi.iloc[-1]
+        prev_rsi = recent_rsi.iloc[-2]
+        
+        return (50 <= latest_rsi <= 60 and
+                latest_rsi > prev_rsi and
+                prev_rsi >= 50)
+    
+    @staticmethod
+    def check_volume_increase_yoy(data, current_period_weeks=4):
+        """
+        Check if recent volume shows year-over-year increase
+        
+        Args:
+            data: DataFrame with Volume column and datetime index
+            current_period_weeks: Number of recent weeks to compare
+            
+        Returns:
+            bool: True if recent volume is higher than same period last year
+        """
+        if data.empty or len(data) < 52:  # Need at least 1 year of weekly data
+            return False
+        
+        if 'Volume' not in data.columns:
+            return False
+        
+        # Get recent volume average
+        recent_volume = data['Volume'].tail(current_period_weeks).mean()
+        
+        # Get volume from same period last year (52 weeks ago)
+        year_ago_start = -(52 + current_period_weeks)
+        year_ago_end = -52
+        
+        if len(data) < abs(year_ago_start):
+            return False
+        
+        year_ago_volume = data['Volume'].iloc[year_ago_start:year_ago_end].mean()
+        
+        if pd.isna(recent_volume) or pd.isna(year_ago_volume) or year_ago_volume == 0:
+            return False
+        
+        return recent_volume > year_ago_volume
+    
+    @staticmethod
+    def check_volume_breakout(data, volume_threshold=1.5, price_breakout=True):
+        """
+        Check if there's a volume breakout with price breakout
+        
+        Args:
+            data: DataFrame with Volume and price columns
+            volume_threshold: Volume multiplier for breakout detection
+            price_breakout: Whether to also check for price breakout
+            
+        Returns:
+            bool: True if volume breakout occurred
+        """
+        if data.empty or len(data) < 20:
+            return False
+        
+        if 'Volume' not in data.columns:
+            return False
+        
+        # Calculate average volume over last 20 periods
+        avg_volume = data['Volume'].tail(20).mean()
+        latest_volume = data['Volume'].iloc[-1]
+        
+        if pd.isna(avg_volume) or pd.isna(latest_volume) or avg_volume == 0:
+            return False
+        
+        volume_breakout_detected = latest_volume > (avg_volume * volume_threshold)
+        
+        if not price_breakout:
+            return volume_breakout_detected
+        
+        # Also check for price breakout (above recent high)
+        if 'High' in data.columns:
+            recent_high = data['High'].tail(10).max()
+            latest_close = data['Close'].iloc[-1]
+            
+            if not pd.isna(recent_high) and not pd.isna(latest_close):
+                price_breakout_detected = latest_close > recent_high
+                return volume_breakout_detected and price_breakout_detected
+        
+        return volume_breakout_detected
+    
+    @staticmethod
+    def check_dmi_positive_turn(data, dmi_period=14):
+        """
+        Check if DMI shows positive turn (DI+ crossing above DI-)
+        
+        Args:
+            data: DataFrame with DMI columns
+            dmi_period: DMI period
+            
+        Returns:
+            bool: True if positive DMI turn occurred recently
+        """
+        if data.empty or len(data) < 3:
+            return False
+        
+        di_plus_col = 'DI_Plus'
+        di_minus_col = 'DI_Minus'
+        
+        if di_plus_col not in data.columns or di_minus_col not in data.columns:
+            return False
+        
+        recent_data = data.tail(3)
+        
+        for i in range(1, len(recent_data)):
+            prev_plus = recent_data[di_plus_col].iloc[i-1]
+            prev_minus = recent_data[di_minus_col].iloc[i-1]
+            curr_plus = recent_data[di_plus_col].iloc[i]
+            curr_minus = recent_data[di_minus_col].iloc[i]
+            
+            # Check if DI+ crossed above DI-
+            if (prev_plus <= prev_minus and curr_plus > curr_minus and
+                not pd.isna(prev_plus) and not pd.isna(prev_minus) and
+                not pd.isna(curr_plus) and not pd.isna(curr_minus)):
+                return True
+        
+        return False
+    
+    @staticmethod
+    def check_bollinger_breakout(data, breakout_type='middle'):
+        """
+        Check if price broke out above Bollinger Band middle or upper band
+        
+        Args:
+            data: DataFrame with Bollinger Bands columns
+            breakout_type: 'middle' or 'upper' band breakout
+            
+        Returns:
+            bool: True if breakout occurred
+        """
+        if data.empty or len(data) < 2:
+            return False
+        
+        required_cols = ['Close', 'BB_Middle']
+        if breakout_type == 'upper':
+            required_cols.append('BB_Upper')
+        
+        if not all(col in data.columns for col in required_cols):
+            return False
+        
+        latest = data.iloc[-1]
+        previous = data.iloc[-2]
+        
+        if breakout_type == 'middle':
+            return (previous['Close'] <= previous['BB_Middle'] and
+                    latest['Close'] > latest['BB_Middle'])
+        else:  # upper
+            return (previous['Close'] <= previous['BB_Upper'] and
+                    latest['Close'] > latest['BB_Upper'])
+    
+    @staticmethod
+    def check_obv_uptrend(data, periods=5):
+        """
+        Check if OBV is in uptrend
+        
+        Args:
+            data: DataFrame with OBV column
+            periods: Number of periods to check for uptrend
+            
+        Returns:
+            bool: True if OBV is trending upward
+        """
+        if data.empty or len(data) < periods:
+            return False
+        
+        if 'OBV' not in data.columns:
+            return False
+        
+        recent_obv = data['OBV'].tail(periods).dropna()
+        if len(recent_obv) < periods:
+            return False
+        
+        # Check if OBV is generally trending upward
+        first_value = recent_obv.iloc[0]
+        last_value = recent_obv.iloc[-1]
+        
+        return last_value > first_value

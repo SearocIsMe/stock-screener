@@ -39,6 +39,15 @@ indicators:
     monthly:
       periods: [4]  # EMA periods for monthly timeframe
   
+  # Moving Averages for trend analysis
+  ma:
+    daily:
+      periods: [10, 20]  # MA periods for daily timeframe
+    weekly:
+      periods: [10, 20]  # MA periods for weekly timeframe
+    monthly:
+      periods: [3, 20]   # MA periods for monthly timeframe
+  
   bias:
     # BIAS calculation: (Close - EMA) / EMA * 100
     daily:
@@ -61,6 +70,9 @@ indicators:
       period: 14
       oversold: 30
       overbought: 70
+      # Monthly RSI specific thresholds
+      uptrend_min: 50   # RSI moving from 50 towards 60
+      uptrend_target: 60
   
   macd:
     daily:
@@ -75,6 +87,62 @@ indicators:
       fast_period: 6
       slow_period: 13
       signal_period: 5
+  
+  # Bollinger Bands configuration
+  bollinger:
+    daily:
+      period: 20
+      std_dev: 2
+    weekly:
+      period: 20
+      std_dev: 2
+    monthly:
+      period: 20
+      std_dev: 2
+  
+  # DMI (Directional Movement Index) configuration
+  dmi:
+    daily:
+      period: 14
+    weekly:
+      period: 14
+    monthly:
+      period: 14
+
+# Weekly and Monthly Filtering Criteria
+filtering_criteria:
+  weekly:
+    # Combination 1: Weekly Double MA + MACD Golden Cross
+    combination_1:
+      ma10_above_ma20: true          # MA10 > MA20 (bullish alignment)
+      macd_golden_cross: true        # MACD just formed golden cross
+      volume_increase: true          # Weekly volume increase YoY
+    
+    # Combination 2: Monthly trend up + Weekly volume breakout
+    combination_2:
+      ma10_above_ma20: true          # MA10 > MA20 (bullish alignment)
+      volume_breakout: true          # Weekly volume breakout of resistance
+      macd_near_golden_cross: true   # MACD approaching golden cross
+      dmi_positive_turn: true        # DMI positive turn
+    
+    # Combination 3: Monthly RSI + Bollinger squeeze breakout
+    combination_3:
+      bollinger_breakout: true       # Breakout above Bollinger middle/upper band
+      obv_uptrend: true             # OBV trending upward
+  
+  monthly:
+    # Condition 1: Monthly 3 consecutive green candles or above 20MA
+    condition_1:
+      three_green_candles: true      # 3 consecutive monthly green candles
+      above_ma20: true              # OR above 20-month MA
+    
+    # Condition 2: Bollinger squeeze -> expansion
+    condition_2:
+      bollinger_squeeze_expansion: true  # Bollinger bands squeeze then expand upward
+    
+    # Condition 3: Monthly RSI momentum
+    condition_3:
+      rsi_momentum_50_to_60: true    # RSI moving from 50 towards 60
 
 # Financial Metrics Thresholds
 financial_metrics:

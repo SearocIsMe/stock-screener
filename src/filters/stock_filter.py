@@ -644,7 +644,12 @@ class StockFilter:
                 return False
             
             # Additional criteria for different time frames
-            if time_frame in ['weekly', 'monthly']:
+            if time_frame == 'weekly':
+                return self._check_weekly_criteria(indicators, symbol)
+            elif time_frame == 'monthly':
+                return self._check_monthly_criteria(indicators, symbol)
+            else:
+                # For daily timeframe, keep existing logic
                 # More stringent criteria for longer time frames
                 # Try to get ADX if available (would need to be calculated separately)
                 adx = None
@@ -681,6 +686,216 @@ class StockFilter:
             
         except Exception as e:
             logger.error(f"Error checking criteria for {symbol}: {e}")
+            return False
+
+    def _check_weekly_criteria(self, indicators, symbol):
+        """
+        Check weekly filtering criteria - any of the 3 combinations
+        
+        Weekly Combinations:
+        1. Weekly Double MA + MACD Golden Cross: MA10 > MA20 + MACD golden cross + volume increase YoY
+        2. Monthly trend up + Weekly volume breakout: MA10 > MA20 + volume breakout + MACD near golden cross + DMI positive turn
+        3. Monthly RSI + Bollinger squeeze breakout: Bollinger breakout + OBV uptrend
+        """
+        try:
+            # Check Combination 1: Weekly Double MA + MACD Golden Cross
+            combination_1 = self._check_weekly_combination_1(indicators, symbol)
+            if combination_1:
+                logger.debug(f"{symbol}: Passed weekly combination 1 (MA + MACD golden cross)")
+                return True
+            
+            # Check Combination 2: Monthly trend up + Weekly volume breakout
+            combination_2 = self._check_weekly_combination_2(indicators, symbol)
+            if combination_2:
+                logger.debug(f"{symbol}: Passed weekly combination 2 (trend + volume breakout)")
+                return True
+            
+            # Check Combination 3: Monthly RSI + Bollinger squeeze breakout
+            combination_3 = self._check_weekly_combination_3(indicators, symbol)
+            if combination_3:
+                logger.debug(f"{symbol}: Passed weekly combination 3 (Bollinger + OBV)")
+                return True
+            
+            logger.debug(f"{symbol}: Did not pass any weekly combinations")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking weekly criteria for {symbol}: {e}")
+            return False
+
+    def _check_weekly_combination_1(self, indicators, symbol):
+        """Weekly Combination 1: MA10 > MA20 + MACD golden cross + volume increase YoY"""
+        try:
+            latest = indicators.iloc[-1]
+            
+            # Check MA10 > MA20 (bullish alignment)
+            ma10 = latest.get('MA_10', None)
+            ma20 = latest.get('MA_20', None)
+            
+            if ma10 is None or ma20 is None or pd.isna(ma10) or pd.isna(ma20):
+                logger.debug(f"{symbol}: MA10 or MA20 not available")
+                return False
+            
+            if ma10 <= ma20:
+                logger.debug(f"{symbol}: MA10 ({ma10:.2f}) not above MA20 ({ma20:.2f})")
+                return False
+            
+            # Check MACD golden cross
+            if not TechnicalIndicators.check_macd_golden_cross(indicators):
+                logger.debug(f"{symbol}: No recent MACD golden cross")
+                return False
+            
+            # Check volume increase YoY
+            if not TechnicalIndicators.check_volume_increase_yoy(indicators):
+                logger.debug(f"{symbol}: No volume increase YoY")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in weekly combination 1 for {symbol}: {e}")
+            return False
+
+    def _check_weekly_combination_2(self, indicators, symbol):
+        """Weekly Combination 2: MA10 > MA20 + volume breakout + MACD near golden cross + DMI positive turn"""
+        try:
+            latest = indicators.iloc[-1]
+            
+            # Check MA10 > MA20 (bullish alignment)
+            ma10 = latest.get('MA_10', None)
+            ma20 = latest.get('MA_20', None)
+            
+            if ma10 is None or ma20 is None or pd.isna(ma10) or pd.isna(ma20):
+                logger.debug(f"{symbol}: MA10 or MA20 not available")
+                return False
+            
+            if ma10 <= ma20:
+                logger.debug(f"{symbol}: MA10 ({ma10:.2f}) not above MA20 ({ma20:.2f})")
+                return False
+            
+            # Check volume breakout
+            if not TechnicalIndicators.check_volume_breakout(indicators):
+                logger.debug(f"{symbol}: No volume breakout")
+                return False
+            
+            # Check MACD near golden cross
+            if not TechnicalIndicators.check_macd_near_golden_cross(indicators):
+                logger.debug(f"{symbol}: MACD not near golden cross")
+                return False
+            
+            # Check DMI positive turn
+            if not TechnicalIndicators.check_dmi_positive_turn(indicators):
+                logger.debug(f"{symbol}: No DMI positive turn")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in weekly combination 2 for {symbol}: {e}")
+            return False
+
+    def _check_weekly_combination_3(self, indicators, symbol):
+        """Weekly Combination 3: Bollinger breakout + OBV uptrend"""
+        try:
+            # Check Bollinger breakout (middle or upper band)
+            bollinger_middle_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'middle')
+            bollinger_upper_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'upper')
+            
+            if not (bollinger_middle_breakout or bollinger_upper_breakout):
+                logger.debug(f"{symbol}: No Bollinger band breakout")
+                return False
+            
+            # Check OBV uptrend
+            if not TechnicalIndicators.check_obv_uptrend(indicators):
+                logger.debug(f"{symbol}: OBV not in uptrend")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in weekly combination 3 for {symbol}: {e}")
+            return False
+
+    def _check_monthly_criteria(self, indicators, symbol):
+        """
+        Check monthly filtering criteria - any of the 3 conditions
+        
+        Monthly Conditions:
+        1. 3 consecutive green candles OR above 20MA
+        2. Bollinger squeeze -> expansion
+        3. RSI moving from 50 towards 60
+        """
+        try:
+            # Check Condition 1: 3 consecutive green candles OR above 20MA
+            condition_1 = self._check_monthly_condition_1(indicators, symbol)
+            if condition_1:
+                logger.debug(f"{symbol}: Passed monthly condition 1 (green candles or above MA20)")
+                return True
+            
+            # Check Condition 2: Bollinger squeeze -> expansion
+            condition_2 = self._check_monthly_condition_2(indicators, symbol)
+            if condition_2:
+                logger.debug(f"{symbol}: Passed monthly condition 2 (Bollinger squeeze expansion)")
+                return True
+            
+            # Check Condition 3: RSI momentum 50 to 60
+            condition_3 = self._check_monthly_condition_3(indicators, symbol)
+            if condition_3:
+                logger.debug(f"{symbol}: Passed monthly condition 3 (RSI momentum)")
+                return True
+            
+            logger.debug(f"{symbol}: Did not pass any monthly conditions")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking monthly criteria for {symbol}: {e}")
+            return False
+
+    def _check_monthly_condition_1(self, indicators, symbol):
+        """Monthly Condition 1: 3 consecutive green candles OR above 20MA"""
+        try:
+            # Check 3 consecutive green candles
+            three_green = TechnicalIndicators.check_three_consecutive_green_candles(indicators)
+            if three_green:
+                logger.debug(f"{symbol}: Has 3 consecutive green candles")
+                return True
+            
+            # Check if above 20MA
+            latest = indicators.iloc[-1]
+            close_price = latest.get('Close', None)
+            ma20 = latest.get('MA_20', None)
+            
+            if close_price is not None and ma20 is not None and not pd.isna(close_price) and not pd.isna(ma20):
+                if close_price > ma20:
+                    logger.debug(f"{symbol}: Above 20MA ({close_price:.2f} > {ma20:.2f})")
+                    return True
+                else:
+                    logger.debug(f"{symbol}: Below 20MA ({close_price:.2f} <= {ma20:.2f})")
+            else:
+                logger.debug(f"{symbol}: Close price or MA20 not available")
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error in monthly condition 1 for {symbol}: {e}")
+            return False
+
+    def _check_monthly_condition_2(self, indicators, symbol):
+        """Monthly Condition 2: Bollinger squeeze -> expansion"""
+        try:
+            return TechnicalIndicators.check_bollinger_squeeze_expansion(indicators)
+            
+        except Exception as e:
+            logger.error(f"Error in monthly condition 2 for {symbol}: {e}")
+            return False
+
+    def _check_monthly_condition_3(self, indicators, symbol):
+        """Monthly Condition 3: RSI moving from 50 towards 60"""
+        try:
+            return TechnicalIndicators.check_rsi_momentum_50_to_60(indicators)
+            
+        except Exception as e:
+            logger.error(f"Error in monthly condition 3 for {symbol}: {e}")
             return False
 
     def _extract_latest_indicators(self, indicators, time_frame):
