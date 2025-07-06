@@ -583,7 +583,7 @@ class DataAcquisition:
                             'Volume': 'sum'
                         }).dropna()
                     elif is_monthly:
-                        df = df.resample('M').agg({
+                        df = df.resample('ME').agg({
                             'Open': 'first',
                             'High': 'max',
                             'Low': 'min',

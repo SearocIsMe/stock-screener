@@ -538,110 +538,7 @@ class StockFilter:
         try:
             # Get financial thresholds
             thresholds = self._get_financial_thresholds()
-            
-            # Extract latest indicator values from DataFrame
-            if indicators.empty:
-                logger.warning(f"No indicators available for {symbol}")
-                return False
-            
-            # Get the most recent row (latest date)
-            latest = indicators.iloc[-1]
-            
-            # Get configuration for the time frame
-            rsi_config = config['indicators']['rsi'][time_frame]
-            macd_config = config['indicators']['macd'][time_frame]
-            
-            # Extract technical indicator values from the latest row
-            rsi_col = f'RSI_{rsi_config["period"]}'
-            macd_signal_col = 'MACD_Signal'
-            macd_col = 'MACD'
-            
-            # Get RSI value
-            rsi = latest.get(rsi_col, None)
-            if rsi is None or pd.isna(rsi):
-                logger.debug(f"{symbol}: RSI not available")
-                return False
-            
-            # Get MACD signal value
-            macd_signal = latest.get(macd_signal_col, None)
-            if macd_signal is None or pd.isna(macd_signal):
-                logger.debug(f"{symbol}: MACD signal not available")
-                return False
-            
-            # Get MACD value for additional checks
-            macd = latest.get(macd_col, None)
-            if macd is None or pd.isna(macd):
-                logger.debug(f"{symbol}: MACD not available")
-                return False
-            
-            # Calculate volume ratio (current volume vs recent average)
-            volume_sma_ratio = 1.0  # Default if not calculated
-            if 'Volume' in indicators.columns and len(indicators) >= 20:
-                # Calculate 20-period volume SMA
-                volume_sma = indicators['Volume'].rolling(window=20).mean().iloc[-1]
-                current_volume = latest['Volume']
-                if not pd.isna(volume_sma) and not pd.isna(current_volume) and volume_sma > 0:
-                    volume_sma_ratio = current_volume / volume_sma
-            
-            # Calculate price vs EMA ratio
-            price_sma_ratio = 1.0   # Default if not calculated
-            ema_config = config['indicators']['ema'][time_frame]
-            if ema_config['periods']:
-                ema_period = ema_config['periods'][0]  # Use first EMA period
-                ema_col = f'EMA_{ema_period}_Close'
-                if ema_col in latest.index and 'Close' in latest.index:
-                    if not pd.isna(latest[ema_col]) and not pd.isna(latest['Close']) and latest[ema_col] > 0:
-                        price_sma_ratio = latest['Close'] / latest[ema_col]
-            
-            # Calculate Bollinger Bands position if we have enough data
-            bollinger_position = 0.5  # Default middle position
-            if 'Close' in indicators.columns and len(indicators) >= 20:
-                # Calculate 20-period Bollinger Bands
-                close_prices = indicators['Close']
-                bb_period = 20
-                bb_std = 2
-                
-                sma_20 = close_prices.rolling(window=bb_period).mean()
-                std_20 = close_prices.rolling(window=bb_period).std()
-                
-                upper_band = sma_20 + (std_20 * bb_std)
-                lower_band = sma_20 - (std_20 * bb_std)
-                
-                # Get latest values
-                latest_close = latest['Close']
-                latest_upper = upper_band.iloc[-1]
-                latest_lower = lower_band.iloc[-1]
-                latest_middle = sma_20.iloc[-1]
-                
-                if not pd.isna(latest_upper) and not pd.isna(latest_lower) and latest_upper != latest_lower:
-                    # Position between 0 (at lower band) and 1 (at upper band)
-                    bollinger_position = (latest_close - latest_lower) / (latest_upper - latest_lower)
-                    bollinger_position = max(0, min(1, bollinger_position))  # Clamp between 0 and 1
-            
-            # RSI criteria (not oversold, not overbought)
-            if rsi < 30 or rsi > 70:
-                logger.debug(f"{symbol}: RSI {rsi} outside acceptable range")
-                return False
-            
-            # MACD signal (positive momentum)
-            if macd_signal <= 0:
-                logger.debug(f"{symbol}: MACD signal {macd_signal} not positive")
-                return False
-            
-            # Bollinger Bands position (not at extremes)
-            if bollinger_position < 0.2 or bollinger_position > 0.8:
-                logger.debug(f"{symbol}: Bollinger position {bollinger_position} at extremes")
-                return False
-            
-            # Volume criteria (above average)
-            if volume_sma_ratio < 1.2:
-                logger.debug(f"{symbol}: Volume ratio {volume_sma_ratio} below threshold")
-                return False
-            
-            # Price trend (above moving average)
-            if price_sma_ratio < 1.0:
-                logger.debug(f"{symbol}: Price ratio {price_sma_ratio} below moving average")
-                return False
+ 
             
             # Additional criteria for different time frames
             if time_frame == 'weekly':
@@ -649,6 +546,110 @@ class StockFilter:
             elif time_frame == 'monthly':
                 return self._check_monthly_criteria(indicators, symbol)
             else:
+                # Extract latest indicator values from DataFrame
+                if indicators.empty:
+                    logger.warning(f"No indicators available for {symbol}")
+                    return False
+                
+                # Get the most recent row (latest date)
+                latest = indicators.iloc[-1]
+                
+                # Get configuration for the time frame
+                rsi_config = config['indicators']['rsi'][time_frame]
+                macd_config = config['indicators']['macd'][time_frame]
+                
+                # Extract technical indicator values from the latest row
+                rsi_col = f'RSI_{rsi_config["period"]}'
+                macd_signal_col = 'MACD_Signal'
+                macd_col = 'MACD'
+                
+                # Get RSI value
+                rsi = latest.get(rsi_col, None)
+                if rsi is None or pd.isna(rsi):
+                    logger.debug(f"{symbol}: RSI not available")
+                    return False
+                
+                # Get MACD signal value
+                macd_signal = latest.get(macd_signal_col, None)
+                if macd_signal is None or pd.isna(macd_signal):
+                    logger.debug(f"{symbol}: MACD signal not available")
+                    return False
+                
+                # Get MACD value for additional checks
+                macd = latest.get(macd_col, None)
+                if macd is None or pd.isna(macd):
+                    logger.debug(f"{symbol}: MACD not available")
+                    return False
+                
+                # Calculate volume ratio (current volume vs recent average)
+                volume_sma_ratio = 1.0  # Default if not calculated
+                if 'Volume' in indicators.columns and len(indicators) >= 20:
+                    # Calculate 20-period volume SMA
+                    volume_sma = indicators['Volume'].rolling(window=20).mean().iloc[-1]
+                    current_volume = latest['Volume']
+                    if not pd.isna(volume_sma) and not pd.isna(current_volume) and volume_sma > 0:
+                        volume_sma_ratio = current_volume / volume_sma
+                
+                # Calculate price vs EMA ratio
+                price_sma_ratio = 1.0   # Default if not calculated
+                ema_config = config['indicators']['ema'][time_frame]
+                if ema_config['periods']:
+                    ema_period = ema_config['periods'][0]  # Use first EMA period
+                    ema_col = f'EMA_{ema_period}_Close'
+                    if ema_col in latest.index and 'Close' in latest.index:
+                        if not pd.isna(latest[ema_col]) and not pd.isna(latest['Close']) and latest[ema_col] > 0:
+                            price_sma_ratio = latest['Close'] / latest[ema_col]
+                
+                # Calculate Bollinger Bands position if we have enough data
+                bollinger_position = 0.5  # Default middle position
+                if 'Close' in indicators.columns and len(indicators) >= 20:
+                    # Calculate 20-period Bollinger Bands
+                    close_prices = indicators['Close']
+                    bb_period = 20
+                    bb_std = 2
+                    
+                    sma_20 = close_prices.rolling(window=bb_period).mean()
+                    std_20 = close_prices.rolling(window=bb_period).std()
+                    
+                    upper_band = sma_20 + (std_20 * bb_std)
+                    lower_band = sma_20 - (std_20 * bb_std)
+                    
+                    # Get latest values
+                    latest_close = latest['Close']
+                    latest_upper = upper_band.iloc[-1]
+                    latest_lower = lower_band.iloc[-1]
+                    latest_middle = sma_20.iloc[-1]
+                    
+                    if not pd.isna(latest_upper) and not pd.isna(latest_lower) and latest_upper != latest_lower:
+                        # Position between 0 (at lower band) and 1 (at upper band)
+                        bollinger_position = (latest_close - latest_lower) / (latest_upper - latest_lower)
+                        bollinger_position = max(0, min(1, bollinger_position))  # Clamp between 0 and 1
+                
+                # RSI criteria (not oversold, not overbought)
+                if rsi < 30 or rsi > 70:
+                    logger.debug(f"{symbol}: RSI {rsi} outside acceptable range")
+                    return False
+                
+                # MACD signal (positive momentum)
+                if macd_signal <= 0:
+                    logger.debug(f"{symbol}: MACD signal {macd_signal} not positive")
+                    return False
+                
+                # Bollinger Bands position (not at extremes)
+                if bollinger_position < 0.2 or bollinger_position > 0.8:
+                    logger.debug(f"{symbol}: Bollinger position {bollinger_position} at extremes")
+                    return False
+                
+                # Volume criteria (above average)
+                if volume_sma_ratio < 1.2:
+                    logger.debug(f"{symbol}: Volume ratio {volume_sma_ratio} below threshold")
+                    return False
+                
+                # Price trend (above moving average)
+                if price_sma_ratio < 1.0:
+                    logger.debug(f"{symbol}: Price ratio {price_sma_ratio} below moving average")
+                    return False
+
                 # For daily timeframe, keep existing logic
                 # More stringent criteria for longer time frames
                 # Try to get ADX if available (would need to be calculated separately)
