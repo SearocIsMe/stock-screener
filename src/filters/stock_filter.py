@@ -412,42 +412,36 @@ class StockFilter:
             # Create filtered stock record
             filtered_stock = FilteredStock(
                 stock_id=stock.id,
+                filter_date=datetime.now(),
                 time_frame=time_frame,
-                rsi=indicators.get('rsi'),
+                bias_value=indicators.get('bias_value'),
+                rsi_value=indicators.get('rsi_value'),
+                macd_value=indicators.get('macd_value'),
                 macd_signal=indicators.get('macd_signal'),
-                bollinger_position=indicators.get('bollinger_position'),
-                volume_sma_ratio=indicators.get('volume_sma_ratio'),
-                price_sma_ratio=indicators.get('price_sma_ratio'),
-                atr=indicators.get('atr'),
-                obv=indicators.get('obv'),
-                stochastic_k=indicators.get('stochastic_k'),
-                stochastic_d=indicators.get('stochastic_d'),
-                williams_r=indicators.get('williams_r'),
-                roc=indicators.get('roc'),
-                cci=indicators.get('cci'),
-                adx=indicators.get('adx'),
-                aroon_up=indicators.get('aroon_up'),
-                aroon_down=indicators.get('aroon_down'),
-                mfi=indicators.get('mfi'),
-                trix=indicators.get('trix'),
-                vortex_pos=indicators.get('vortex_pos'),
-                vortex_neg=indicators.get('vortex_neg'),
-                filtered_at=datetime.now()
+                macd_histogram=indicators.get('macd_histogram'),
+                gross_margin=indicators.get('gross_margin'),
+                roe=indicators.get('roe'),
+                rd_ratio=indicators.get('rd_ratio')
             )
             
             # Check if record already exists for today
             existing = self.db.query(FilteredStock).filter(
                 FilteredStock.stock_id == stock.id,
                 FilteredStock.time_frame == time_frame,
-                FilteredStock.filtered_at >= datetime.now().date()
+                FilteredStock.filter_date >= datetime.now().date()
             ).first()
             
             if existing:
                 # Update existing record
-                for key, value in indicators.items():
-                    if hasattr(existing, key):
-                        setattr(existing, key, value)
-                existing.filtered_at = datetime.now()
+                existing.bias_value = indicators.get('bias_value')
+                existing.rsi_value = indicators.get('rsi_value')
+                existing.macd_value = indicators.get('macd_value')
+                existing.macd_signal = indicators.get('macd_signal')
+                existing.macd_histogram = indicators.get('macd_histogram')
+                existing.gross_margin = indicators.get('gross_margin')
+                existing.roe = indicators.get('roe')
+                existing.rd_ratio = indicators.get('rd_ratio')
+                existing.filter_date = datetime.now()
             else:
                 # Add new record
                 self.db.add(filtered_stock)
@@ -493,7 +487,7 @@ class StockFilter:
             try:
                 filtered_stocks = self.db.query(FilteredStock).join(Stock).filter(
                     FilteredStock.time_frame == time_frame,
-                    FilteredStock.filtered_at >= cutoff_date
+                    FilteredStock.filter_date >= cutoff_date
                 ).all()
                 
                 results[time_frame] = []
@@ -501,27 +495,16 @@ class StockFilter:
                     stock_data = {
                         'symbol': fs.stock.symbol,
                         'indicators': {
-                            'rsi': fs.rsi,
+                            'bias_value': fs.bias_value,
+                            'rsi_value': fs.rsi_value,
+                            'macd_value': fs.macd_value,
                             'macd_signal': fs.macd_signal,
-                            'bollinger_position': fs.bollinger_position,
-                            'volume_sma_ratio': fs.volume_sma_ratio,
-                            'price_sma_ratio': fs.price_sma_ratio,
-                            'atr': fs.atr,
-                            'obv': fs.obv,
-                            'stochastic_k': fs.stochastic_k,
-                            'stochastic_d': fs.stochastic_d,
-                            'williams_r': fs.williams_r,
-                            'roc': fs.roc,
-                            'cci': fs.cci,
-                            'adx': fs.adx,
-                            'aroon_up': fs.aroon_up,
-                            'aroon_down': fs.aroon_down,
-                            'mfi': fs.mfi,
-                            'trix': fs.trix,
-                            'vortex_pos': fs.vortex_pos,
-                            'vortex_neg': fs.vortex_neg
+                            'macd_histogram': fs.macd_histogram,
+                            'gross_margin': fs.gross_margin,
+                            'roe': fs.roe,
+                            'rd_ratio': fs.rd_ratio
                         },
-                        'filtered_at': fs.filtered_at.isoformat()
+                        'filtered_at': fs.created_at.isoformat() if fs.created_at else None
                     }
                     results[time_frame].append(stock_data)
                 
