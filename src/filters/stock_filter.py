@@ -157,12 +157,22 @@ class StockFilter:
                         continue
                     
                     # Calculate technical indicators
-                    indicators = TechnicalIndicators.calculate_all_indicators(data)
+                    indicators = TechnicalIndicators.calculate_all_indicators(data, time_frame)
+                    
+                    # Check if indicators calculation was successful
+                    if indicators.empty or len(indicators) == 0:
+                        logger.warning(f"Failed to calculate indicators for {symbol} in {time_frame} timeframe")
+                        continue
                     
                     # Check if stock meets criteria
                     if self._meets_criteria(indicators, time_frame, symbol):
                         # Extract latest indicator values for JSON serialization
                         latest_indicators = self._extract_latest_indicators(indicators, time_frame)
+                        
+                        # Validate that latest_indicators is not None or empty
+                        if not latest_indicators:
+                            logger.warning(f"Failed to extract latest indicators for {symbol} in {time_frame} timeframe")
+                            continue
                         
                         result = {
                             'symbol': symbol,
@@ -710,6 +720,11 @@ class StockFilter:
     def _check_weekly_combination_1(self, indicators, symbol):
         """Weekly Combination 1: MA10 > MA20 + MACD golden cross + volume increase YoY"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for weekly combination 1")
+                return False
+            
             latest = indicators.iloc[-1]
             
             # Check MA10 > MA20 (bullish alignment)
@@ -743,6 +758,11 @@ class StockFilter:
     def _check_weekly_combination_2(self, indicators, symbol):
         """Weekly Combination 2: MA10 > MA20 + volume breakout + MACD near golden cross + DMI positive turn"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for weekly combination 2")
+                return False
+            
             latest = indicators.iloc[-1]
             
             # Check MA10 > MA20 (bullish alignment)
@@ -781,6 +801,11 @@ class StockFilter:
     def _check_weekly_combination_3(self, indicators, symbol):
         """Weekly Combination 3: Bollinger breakout + OBV uptrend"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for weekly combination 3")
+                return False
+            
             # Check Bollinger breakout (middle or upper band)
             bollinger_middle_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'middle')
             bollinger_upper_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'upper')
@@ -838,6 +863,11 @@ class StockFilter:
     def _check_monthly_condition_1(self, indicators, symbol):
         """Monthly Condition 1: 3 consecutive green candles OR above 20MA"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for monthly condition 1")
+                return False
+            
             # Check 3 consecutive green candles
             three_green = TechnicalIndicators.check_three_consecutive_green_candles(indicators)
             if three_green:
@@ -867,6 +897,11 @@ class StockFilter:
     def _check_monthly_condition_2(self, indicators, symbol):
         """Monthly Condition 2: Bollinger squeeze -> expansion"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for monthly condition 2")
+                return False
+            
             return TechnicalIndicators.check_bollinger_squeeze_expansion(indicators)
             
         except Exception as e:
@@ -876,6 +911,11 @@ class StockFilter:
     def _check_monthly_condition_3(self, indicators, symbol):
         """Monthly Condition 3: RSI moving from 50 towards 60"""
         try:
+            # Check if indicators DataFrame is empty or has insufficient data
+            if indicators.empty or len(indicators) == 0:
+                logger.debug(f"{symbol}: No indicators data available for monthly condition 3")
+                return False
+            
             return TechnicalIndicators.check_rsi_momentum_50_to_60(indicators)
             
         except Exception as e:
@@ -893,76 +933,107 @@ class StockFilter:
         Returns:
             dict: JSON-serializable dictionary of latest indicator values
         """
-        if indicators.empty:
+        if indicators.empty or len(indicators) == 0:
+            logger.warning("Empty indicators DataFrame provided to _extract_latest_indicators")
             return {}
         
-        # Get the latest row
-        latest = indicators.iloc[-1]
-        
-        # Get configuration for the time frame
-        rsi_config = config['indicators']['rsi'][time_frame]
-        macd_config = config['indicators']['macd'][time_frame]
-        ema_config = config['indicators']['ema'][time_frame]
-        
-        # Extract key indicators
-        result = {
-            'close_price': float(latest.get('Close', 0)) if not pd.isna(latest.get('Close', 0)) else 0,
-            'volume': int(latest.get('Volume', 0)) if not pd.isna(latest.get('Volume', 0)) else 0,
-            'date': latest.name.isoformat() if hasattr(latest.name, 'isoformat') else str(latest.name)
-        }
-        
-        # RSI
-        rsi_col = f'RSI_{rsi_config["period"]}'
-        if rsi_col in latest.index and not pd.isna(latest[rsi_col]):
-            result['rsi'] = float(latest[rsi_col])
-        
-        # MACD
-        if 'MACD' in latest.index and not pd.isna(latest['MACD']):
-            result['macd'] = float(latest['MACD'])
-        if 'MACD_Signal' in latest.index and not pd.isna(latest['MACD_Signal']):
-            result['macd_signal'] = float(latest['MACD_Signal'])
-        if 'MACD_Histogram' in latest.index and not pd.isna(latest['MACD_Histogram']):
-            result['macd_histogram'] = float(latest['MACD_Histogram'])
-        
-        # EMA and BIAS for each configured period
-        for period in ema_config['periods']:
-            ema_col = f'EMA_{period}_Close'
-            bias_col = f'BIAS_{period}_Close'
+        try:
+            # Get the latest row
+            latest = indicators.iloc[-1]
             
-            if ema_col in latest.index and not pd.isna(latest[ema_col]):
-                result[f'ema_{period}'] = float(latest[ema_col])
+            # Get configuration for the time frame
+            rsi_config = config['indicators']['rsi'][time_frame]
+            macd_config = config['indicators']['macd'][time_frame]
+            ema_config = config['indicators']['ema'][time_frame]
             
-            if bias_col in latest.index and not pd.isna(latest[bias_col]):
-                result[f'bias_{period}'] = float(latest[bias_col])
-        
-        # Calculate additional ratios
-        if 'Close' in latest.index and ema_config['periods']:
-            ema_period = ema_config['periods'][0]
-            ema_col = f'EMA_{ema_period}_Close'
-            if ema_col in latest.index and not pd.isna(latest[ema_col]) and latest[ema_col] > 0:
-                result['price_ema_ratio'] = float(latest['Close'] / latest[ema_col])
-        
-        # Volume ratio if we have enough data
-        if 'Volume' in indicators.columns and len(indicators) >= 20:
-            volume_sma = indicators['Volume'].rolling(window=20).mean().iloc[-1]
-            if not pd.isna(volume_sma) and volume_sma > 0:
-                result['volume_sma_ratio'] = float(latest['Volume'] / volume_sma)
-        
-        # Bollinger Bands position if calculated
-        if 'Close' in indicators.columns and len(indicators) >= 20:
-            close_prices = indicators['Close']
-            sma_20 = close_prices.rolling(window=20).mean().iloc[-1]
-            std_20 = close_prices.rolling(window=20).std().iloc[-1]
+            # Extract key indicators with safe value handling
+            close_val = latest.get('Close', 0)
+            volume_val = latest.get('Volume', 0)
             
-            if not pd.isna(sma_20) and not pd.isna(std_20) and std_20 > 0:
-                upper_band = sma_20 + (std_20 * 2)
-                lower_band = sma_20 - (std_20 * 2)
+            result = {
+                'close_price': float(close_val) if close_val is not None and not pd.isna(close_val) else 0.0,
+                'volume': int(volume_val) if volume_val is not None and not pd.isna(volume_val) else 0,
+                'date': latest.name.isoformat() if hasattr(latest.name, 'isoformat') else str(latest.name)
+            }
+            
+            # RSI
+            rsi_col = f'RSI_{rsi_config["period"]}'
+            if rsi_col in latest.index:
+                rsi_val = latest[rsi_col]
+                if rsi_val is not None and not pd.isna(rsi_val):
+                    result['rsi'] = float(rsi_val)
+            
+            # MACD
+            if 'MACD' in latest.index:
+                macd_val = latest['MACD']
+                if macd_val is not None and not pd.isna(macd_val):
+                    result['macd'] = float(macd_val)
+                    
+            if 'MACD_Signal' in latest.index:
+                macd_signal_val = latest['MACD_Signal']
+                if macd_signal_val is not None and not pd.isna(macd_signal_val):
+                    result['macd_signal'] = float(macd_signal_val)
+                    
+            if 'MACD_Histogram' in latest.index:
+                macd_hist_val = latest['MACD_Histogram']
+                if macd_hist_val is not None and not pd.isna(macd_hist_val):
+                    result['macd_histogram'] = float(macd_hist_val)
+            
+            # EMA and BIAS for each configured period
+            for period in ema_config['periods']:
+                ema_col = f'EMA_{period}_Close'
+                bias_col = f'BIAS_{period}_Close'
                 
-                if upper_band != lower_band:
-                    bollinger_position = (latest['Close'] - lower_band) / (upper_band - lower_band)
-                    result['bollinger_position'] = float(max(0, min(1, bollinger_position)))
-                    result['bollinger_upper'] = float(upper_band)
-                    result['bollinger_lower'] = float(lower_band)
-                    result['bollinger_middle'] = float(sma_20)
-        
-        return result
+                if ema_col in latest.index:
+                    ema_val = latest[ema_col]
+                    if ema_val is not None and not pd.isna(ema_val):
+                        result[f'ema_{period}'] = float(ema_val)
+                
+                if bias_col in latest.index:
+                    bias_val = latest[bias_col]
+                    if bias_val is not None and not pd.isna(bias_val):
+                        result[f'bias_{period}'] = float(bias_val)
+            
+            # Calculate additional ratios
+            if 'Close' in latest.index and ema_config['periods']:
+                close_val = latest['Close']
+                ema_period = ema_config['periods'][0]
+                ema_col = f'EMA_{ema_period}_Close'
+                if (ema_col in latest.index and close_val is not None and
+                    not pd.isna(close_val) and not pd.isna(latest[ema_col]) and
+                    latest[ema_col] is not None and latest[ema_col] > 0):
+                    result['price_ema_ratio'] = float(close_val / latest[ema_col])
+            
+            # Volume ratio if we have enough data
+            if 'Volume' in indicators.columns and len(indicators) >= 20:
+                volume_sma = indicators['Volume'].rolling(window=20).mean().iloc[-1]
+                volume_val = latest.get('Volume', 0)
+                if (volume_sma is not None and not pd.isna(volume_sma) and volume_sma > 0 and
+                    volume_val is not None and not pd.isna(volume_val)):
+                    result['volume_sma_ratio'] = float(volume_val / volume_sma)
+            
+            # Bollinger Bands position if calculated
+            if 'Close' in indicators.columns and len(indicators) >= 20:
+                close_prices = indicators['Close']
+                sma_20 = close_prices.rolling(window=20).mean().iloc[-1]
+                std_20 = close_prices.rolling(window=20).std().iloc[-1]
+                close_val = latest.get('Close', 0)
+                
+                if (sma_20 is not None and std_20 is not None and close_val is not None and
+                    not pd.isna(sma_20) and not pd.isna(std_20) and not pd.isna(close_val) and
+                    std_20 > 0):
+                    upper_band = sma_20 + (std_20 * 2)
+                    lower_band = sma_20 - (std_20 * 2)
+                    
+                    if upper_band != lower_band:
+                        bollinger_position = (close_val - lower_band) / (upper_band - lower_band)
+                        result['bollinger_position'] = float(max(0, min(1, bollinger_position)))
+                        result['bollinger_upper'] = float(upper_band)
+                        result['bollinger_lower'] = float(lower_band)
+                        result['bollinger_middle'] = float(sma_20)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error extracting latest indicators: {e}")
+            return {}

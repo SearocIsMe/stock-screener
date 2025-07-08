@@ -452,22 +452,30 @@ class TechnicalIndicators:
         if 'Volume' not in data.columns:
             return False
         
-        # Get recent volume average
-        recent_volume = data['Volume'].tail(current_period_weeks).mean()
-        
-        # Get volume from same period last year (52 weeks ago)
-        year_ago_start = -(52 + current_period_weeks)
-        year_ago_end = -52
-        
-        if len(data) < abs(year_ago_start):
+        try:
+            # Get recent volume average
+            recent_volume = data['Volume'].tail(current_period_weeks).mean()
+            
+            # Get volume from same period last year (52 weeks ago)
+            year_ago_start = -(52 + current_period_weeks)
+            year_ago_end = -52
+            
+            if len(data) < abs(year_ago_start):
+                return False
+            
+            year_ago_volume = data['Volume'].iloc[year_ago_start:year_ago_end].mean()
+            
+            # Check for None or NaN values before comparison
+            if (recent_volume is None or year_ago_volume is None or
+                pd.isna(recent_volume) or pd.isna(year_ago_volume) or
+                year_ago_volume == 0):
+                return False
+            
+            return recent_volume > year_ago_volume
+            
+        except Exception as e:
+            logger.error(f"Error in volume YoY check: {e}")
             return False
-        
-        year_ago_volume = data['Volume'].iloc[year_ago_start:year_ago_end].mean()
-        
-        if pd.isna(recent_volume) or pd.isna(year_ago_volume) or year_ago_volume == 0:
-            return False
-        
-        return recent_volume > year_ago_volume
     
     @staticmethod
     def check_volume_breakout(data, volume_threshold=1.5, price_breakout=True):
@@ -488,28 +496,37 @@ class TechnicalIndicators:
         if 'Volume' not in data.columns:
             return False
         
-        # Calculate average volume over last 20 periods
-        avg_volume = data['Volume'].tail(20).mean()
-        latest_volume = data['Volume'].iloc[-1]
-        
-        if pd.isna(avg_volume) or pd.isna(latest_volume) or avg_volume == 0:
-            return False
-        
-        volume_breakout_detected = latest_volume > (avg_volume * volume_threshold)
-        
-        if not price_breakout:
-            return volume_breakout_detected
-        
-        # Also check for price breakout (above recent high)
-        if 'High' in data.columns:
-            recent_high = data['High'].tail(10).max()
-            latest_close = data['Close'].iloc[-1]
+        try:
+            # Calculate average volume over last 20 periods
+            avg_volume = data['Volume'].tail(20).mean()
+            latest_volume = data['Volume'].iloc[-1]
             
-            if not pd.isna(recent_high) and not pd.isna(latest_close):
-                price_breakout_detected = latest_close > recent_high
-                return volume_breakout_detected and price_breakout_detected
-        
-        return volume_breakout_detected
+            # Check for None or NaN values before comparison
+            if (avg_volume is None or latest_volume is None or
+                pd.isna(avg_volume) or pd.isna(latest_volume) or
+                avg_volume == 0):
+                return False
+            
+            volume_breakout_detected = latest_volume > (avg_volume * volume_threshold)
+            
+            if not price_breakout:
+                return volume_breakout_detected
+            
+            # Also check for price breakout (above recent high)
+            if 'High' in data.columns and 'Close' in data.columns:
+                recent_high = data['High'].tail(10).max()
+                latest_close = data['Close'].iloc[-1]
+                
+                if (recent_high is not None and latest_close is not None and
+                    not pd.isna(recent_high) and not pd.isna(latest_close)):
+                    price_breakout_detected = latest_close > recent_high
+                    return volume_breakout_detected and price_breakout_detected
+            
+            return volume_breakout_detected
+            
+        except Exception as e:
+            logger.error(f"Error in volume breakout check: {e}")
+            return False
     
     @staticmethod
     def check_dmi_positive_turn(data, dmi_period=14):
