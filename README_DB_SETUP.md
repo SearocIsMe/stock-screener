@@ -165,6 +165,7 @@ We provide a shell script that automates the database setup process:
 This script will:
 - Create the database if it doesn't exist
 - Create the necessary tables and indexes
+- Run database migrations to add financial metrics columns
 - Install required Python packages
 
 ## Manual Setup
@@ -183,7 +184,28 @@ psql -U postgres -c "CREATE DATABASE stock_screener;"
 psql -U postgres -d stock_screener -f init_db.sql
 ```
 
-### 3. Install Required Python Packages
+### 3. Run Database Migrations
+
+**IMPORTANT**: After initializing the database, you must run the migrations to add financial metrics columns:
+
+```bash
+# Navigate to migrations directory
+cd migrations
+
+# Make the migration script executable
+chmod +x run_migration.sh
+
+# Run the migration
+./run_migration.sh
+```
+
+Alternatively, you can run the migration directly:
+
+```bash
+PGPASSWORD=7788 psql -h localhost -p 5432 -U stock_user -d stock_screener -f migrations/add_financial_metrics.sql
+```
+
+### 4. Install Required Python Packages
 
 ```bash
 pip install -r requirements.txt

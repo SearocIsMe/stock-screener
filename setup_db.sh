@@ -67,6 +67,20 @@ else
     exit 1
 fi
 
+# Run database migrations
+echo -e "${YELLOW}Running database migrations...${NC}"
+if [ -f "migrations/add_financial_metrics.sql" ]; then
+    PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -f migrations/add_financial_metrics.sql
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Database migrations completed successfully!${NC}"
+    else
+        echo -e "${RED}Failed to run database migrations. Please check the error messages above.${NC}"
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}No migration files found. Skipping migrations.${NC}"
+fi
+
 echo -e "${YELLOW}Setting up Python environment...${NC}"
 
 # Check if Python is installed
