@@ -1,29 +1,34 @@
 # Stock Screener
 
-A comprehensive stock screening application that filters stocks based on technical indicators.
+A comprehensive stock screening application that filters stocks based on technical indicators and financial metrics.
 
 ## Features
 
 - Fetch stock data from Yahoo Finance API
-- Calculate technical indicators (BIAS, RSI, MACD) 
+- Calculate technical indicators (BIAS, RSI, MACD, MA, Bollinger Bands, DMI, OBV) 
 - Filter stocks based on technical indicators and financial metrics
 - Calculate portfolio performance metrics and return on investment
 - Financial metrics filtering (毛利率/Gross Profit Margin, 净资产收益率/Return on Equity, 研发比率/R&D Ratio)
 - Store filtered results in PostgreSQL and Redis
 - RESTful API for accessing filtered stocks
+- Multiple free data sources with automatic fallback
+- Enhanced weekly and monthly filtering criteria
 
 ## Recent Updates
 
+- **Database Migration**: Added financial metrics columns (gross_margin, roe, rd_ratio) to support advanced filtering
 - **Rate Limit Handling**: Added robust retry mechanism with exponential backoff for Yahoo Finance API rate limits
 - **API Improvements**: Enhanced `/api/retrieve_filtered_stocks` to properly perform AND operations when multiple timeframes are specified
 - **Data Structure**: Fixed response structure to ensure FinancialMetrics and metaData are consistently at the same level as timeframes
 - **Error Handling**: Improved JSON parsing in `/api/performance_retreat` endpoint to handle special characters and formatting issues
+- **Free Data Sources**: Implemented multiple free data sources (yfinance, pandas-datareader, akshare) with automatic fallback
+- **Enhanced Filtering**: Added sophisticated weekly and monthly filtering criteria with multiple technical indicators
 
 ## Technical Stack
 
 - **Backend**: Python
 - **Database**: PostgreSQL, Redis
-- **Data Source**: Yahoo Finance (via yfinance)
+- **Data Source**: Yahoo Finance (via yfinance), pandas-datareader, akshare
 - **API Framework**: FastAPI
 
 ## Getting Started
@@ -42,46 +47,170 @@ A comprehensive stock screening application that filters stocks based on technic
    cd stock-screener
    ```
 
-2. Set up PostgreSQL and Redis (see [Database Setup](README_DB_SETUP.md) for detailed instructions):
+2. Set up PostgreSQL and Redis:
+   
+   #### For WSL (Windows Subsystem for Linux) users:
+   
+   **Installing PostgreSQL:**
    ```bash
-   # For WSL users
+   # Update package list
    sudo apt update
-   sudo apt install postgresql postgresql-contrib redis-server
+   
+   # Install PostgreSQL
+   sudo apt install postgresql postgresql-contrib
+   
+   # Start PostgreSQL service
+   sudo service postgresql start
+   
+   # Set up postgres user password
+   sudo -u postgres psql
+   postgres=# \password postgres
+   postgres=# \q
+   ```
+   
+   **Creating stock_user:**
+   ```bash
+   # Switch to postgres user
+   sudo -u postgres psql
+   
+   # Create user with password
+   CREATE USER stock_user WITH PASSWORD '7788';
+   
+   # Grant permissions
+   ALTER USER stock_user WITH LOGIN;
+   ALTER USER stock_user CREATEDB;
+   
+   # Create database
+   CREATE DATABASE stock_screener OWNER stock_user;
+   
+   # Grant privileges
+   GRANT ALL PRIVILEGES ON DATABASE stock_screener TO stock_user;
+   
+   # Exit
+   \q
+   ```
+   
+   **Installing Redis:**
+   ```bash
+   # Install Redis
+   sudo apt install redis-server
+   
+   # Start Redis service
+   sudo service redis-server start
+   ```
+   
+   **Auto-start services in WSL:**
+   Add to your `~/.bashrc`:
+   ```bash
    sudo service postgresql start
    sudo service redis-server start
    ```
 
-3. Run the database setup script:
+3. Run the automatic database setup script:
    ```bash
    ./setup_db.sh
    ```
+   
+   This script will:
+   - Create the database if it doesn't exist
+   - Create the necessary tables and indexes
+   - Run database migrations to add financial metrics columns
+   - Install required Python packages
 
-4. Start the application:
+4. **Manual Setup Alternative:**
+   
+   If you prefer manual setup:
+   ```bash
+   # Create database
+   psql -U postgres -c "CREATE DATABASE stock_screener;"
+   
+   # Run initialization script
+   psql -U postgres -d stock_screener -f init_db.sql
+   
+   # Run migrations
+   cd migrations
+   chmod +x run_migration.sh
+   ./run_migration.sh
+   
+   # Or run migration directly
+   PGPASSWORD=7788 psql -h localhost -p 5432 -U stock_user -d stock_screener -f migrations/add_financial_metrics.sql
+   
+   # Install Python packages
+   pip install -r requirements.txt
+   ```
+
+5. Start the application:
    ```bash
    python run.py
    ```
 
-5. Access the API at http://localhost:8000
-
-For detailed setup instructions, especially for WSL users, see [Database Setup](README_DB_SETUP.md).
+6. Access the API at http://localhost:8000
 
 ## Configuration
 
 The application configuration is stored in `config/config.yaml`. You can modify this file to adjust:
 
-- Database connection parameters
-- API settings
-- Data fetching parameters
-- Technical indicator parameters
-- Financial metrics thresholds:
-  - `gross_margin_threshold`: Minimum acceptable 毛利率/gross profit margin (default: 0.3 or 30%)
-  - `roe_threshold`: Minimum acceptable 净资产收益率/return on equity (default: 0.15 or 15%)
-  - `rd_ratio_threshold`: Minimum acceptable 研发比率/R&D to revenue ratio (default: 0.1 or 10%)
-  - `enable_financial_filtering`: Enable/disable financial metrics filtering
+### Database Configuration
+```yaml
+database:
+  postgres:
+    host: localhost
+    port: 5432
+    username: stock_user
+    password: 7788
+    database: stock_screener
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    db: 0
+    expiration_days: 30
+```
+
+### Technical Indicators Configuration
+- **EMA/MA periods**: Configurable for daily, weekly, monthly timeframes
+- **BIAS thresholds**: Different thresholds for each timeframe
+- **RSI parameters**: Period, oversold/overbought levels
+- **MACD parameters**: Fast/slow/signal periods
+- **Bollinger Bands**: Period and standard deviation
+- **DMI**: Period for trend analysis
+
+### Financial Metrics Thresholds
+```yaml
+financial_metrics:
+  gross_margin_threshold: 0.3  # 毛利率 (30%)
+  roe_threshold: 0.05         # 净资产收益率 (5%)
+  rd_ratio_threshold: 0.07    # 研发比率 (7%)
+  enable_financial_filtering: true
+```
+
+### Weekly and Monthly Filtering Criteria
+
+**Weekly Combinations (any of 3):**
+1. **Double MA + MACD Golden Cross**
+   - MA10 > MA20 (bullish alignment)
+   - MACD just formed golden cross
+   - Volume increased year-over-year
+
+2. **Monthly trend up + Weekly volume breakout**
+   - MA10 > MA20 (bullish alignment)
+   - Volume breakout of resistance
+   - MACD approaching golden cross
+   - DMI positive turn
+
+3. **Monthly RSI + Bollinger squeeze breakout**
+   - Breakout above Bollinger middle/upper band
+   - OBV trending upward
+
+**Monthly Conditions (any of 3):**
+1. **3 consecutive green candles OR above 20MA**
+2. **Bollinger squeeze → expansion**
+3. **RSI momentum from 50 towards 60**
 
 ## Usage
 
 ### API Endpoints
+
 All endpoints are prefixed with `/api` and return a standardized response format:
 
 ```json
@@ -94,438 +223,156 @@ All endpoints are prefixed with `/api` and return a standardized response format
 }
 ```
 
-- `POST /api/trigger_fetch_filtering`: Trigger fetching and filtering of stocks
-  - Fetches stock data if not already in Redis
-  - Calculates indicators for each stock
-  - Filters stocks based on indicators and financial metrics
-  - Stores filtered results in Redis
-  - Request body:
-    ```json
-    {
-      "symbols": ["AAPL", "MSFT"] or ["all"],
-      "timeFrame": ["daily", "weekly", "monthly"],
-      "financialFilters": {
-        "gross_margin_threshold": 0.3,
-        "roe_threshold": 0.15,
-        "rd_ratio_threshold": 0.1
-      }
-    }
-    ```
+#### 1. Trigger Fetch and Filtering
+`POST /api/trigger_fetch_filtering`
 
-- `POST /api/retrieve_filtered_stocks`: Retrieve filtered stocks from Redis
-  - Scans Redis for filtered stocks
-  - Filters by time frame (performs AND operation when multiple timeframes are specified)
-  - Returns filtered stocks with consistent structure (FinancialMetrics and metaData at same level as timeframes)
-  - Request body:
-    ```json
-    {
-      "job_id": "optional_job_id_from_trigger_fetch_filtering",
-      "timeFrame": ["daily", "weekly", "monthly"],
-      "stockNameOnly": false,
-      "recentDay": 1
-    }
-    ```
-  - Response body (with "daily", "weekly" must to meet):
-    <details>
-    <summary>Collapse for the filtered stocks </summary>
-    ```json
-      {
-      "success": true,
-      "message": "Successfully retrieved 88 filtered stocks",
-      "data": {
-         "filtered_stocks": {
-            "PUBM": {
-            "metaData": {
-               "stock": "PUBM",
-               "filterTime": "2025-03-12T14:32:49.035766"
-            },
-            "FinancialMetrics": {
-               "gross_margin": 0.45,
-               "roe": 0.22,
-               "rd_ratio": 0.15,
-               "thresholds": {
-                 "gross_margin": 0.3,
-                 "roe": 0.15,
-                 "rd_ratio": 0.1
-               }
-            },
-            "daily": {
-               "BIAS": {
-                  "bias": -15.794040576424631
-               },
-               "RSI": {
-                  "value": 18.564055122174523,
-                  "period": 14
-               },
-               "MACD": {
-                  "value": -1.5234014344971847,
-                  "signal": -1.090363937702842,
-                  "histogram": -0.43303749679434267,
-                  "fast_period": 12,
-                  "slow_period": 26,
-                  "signal_period": 9
-               }
-            },
-            "weekly": {
-               "BIAS": {
-                  "bias": -27.599479497090577
-               },
-               "RSI": {
-                  "value": 28.62853198352002,
-                  "period": 14
-               },
-               "MACD": {
-                  "value": -1.3868694305196243,
-                  "signal": -0.8667288557902623,
-                  "histogram": -0.520140574729362,
-                  "fast_period": 12,
-                  "slow_period": 26,
-                  "signal_period": 9
-               }
-            }
-            }
-         }
-      }
-      }
-    ```
-    </details>
+Fetches stock data and applies filtering criteria.
 
-- `POST /api/fetch_stock_history`: Fetch stock history for specified symbols
-  - Fetches stock history for specified symbols
-  - Stores in database
-  - Implements retry mechanism for rate limit handling
-  - Request body:
-    ```json
-    {
-      "symbols": ["AAPL", "MSFT"] or ["all"],
-      "timeRange": {
-        "start": "2023-01-01",
-        "end": "2023-12-31"
-      }
-    }
-    ```
+**Request:**
+```json
+{
+  "symbols": ["AAPL", "MSFT"] or ["all"],
+  "timeFrame": ["daily", "weekly", "monthly"],
+  "financialFilters": {
+    "gross_margin_threshold": 0.3,
+    "roe_threshold": 0.15,
+    "rd_ratio_threshold": 0.1
+  }
+}
+```
 
-- `POST /api/performance_retreat`: Calculate performance metrics for a portfolio of stocks
-  - Calculates the performance of each stock in the portfolio from start_date to end_date
-  - Calculates the total portfolio performance
-  - Returns detailed performance metrics
-  - Handles special characters in JSON (like fullwidth commas)
-  - Request body:(take some stocks that met the 3 BIAS strategy, 5 stocks among the 21 stock screened on 13-03-2025)
-    ```json
-        {
-          "stocks": [
-            {
-              "symbol": "ACHC",
-              "percentage": 20
-            },
-            {
-              "symbol": "COO",
-              "percentage": 20
-            },
-            {
-              "symbol": "ELTK",
-              "percentage": 20
-            },
-            {
-              "symbol": "IMXI",
-              "percentage": 20
-            },
-            {
-              "symbol": "SGC",
-              "percentage": 20
-            }
-          ],
-          "total_money": 10000,
-          "start_date": "2025-03-13",
-          "end_date": "2025-03-19"
-        }
-    ```
-  - Response body:
-    ```json
-        {
-          "success": true,
-          "message": "Successfully calculated portfolio performance",
-          "data": {
-            "start_date": "2025-03-13",
-            "end_date": "2025-03-19",
-            "initial_total_value": 10000,
-            "final_total_value": 10124.697070683062,
-            "total_gain_loss": 124.69707068306161,
-            "total_gain_loss_percentage": 1.2469707068306162,
-            "stock_performances": [
-              {
-                "symbol": "ACHC",
-                "shares": 69.90562591167397,
-                "initial_price": 28.610000610351562,
-                "final_price": 29.25,
-                "initial_value": 2000.0000000000002,
-                "final_value": 2044.7395579164636,
-                "gain_loss": 44.739557916463355,
-                "gain_loss_percentage": 2.2369778958231676,
-                "contribution_percentage": 35.87859576122393
-              },
-              {
-                "symbol": "COO",
-                "shares": 25.645957355221515,
-                "initial_price": 77.98500061035156,
-                "final_price": 79.81999969482422,
-                "initial_value": 2000,
-                "final_value": 2047.0603082672562,
-                "gain_loss": 47.06030826725623,
-                "gain_loss_percentage": 2.3530154133628116,
-                "contribution_percentage": 37.73970632146432
-              },
-              {
-                "symbol": "ELTK",
-                "shares": 241.4001251460152,
-                "initial_price": 8.28499984741211,
-                "final_price": 8.619999885559082,
-                "initial_value": 2000,
-                "final_value": 2080.869051132599,
-                "gain_loss": 80.869051132599,
-                "gain_loss_percentage": 4.0434525566299495,
-                "contribution_percentage": 64.85240646762358
-              },
-              {
-                "symbol": "IMXI",
-                "shares": 153.0807494252315,
-                "initial_price": 13.065000057220459,
-                "final_price": 13.069999694824219,
-                "initial_value": 2000.0000000000002,
-                "final_value": 2000.7653482712383,
-                "gain_loss": 0.7653482712380537,
-                "gain_loss_percentage": 0.03826741356190268,
-                "contribution_percentage": 0.6137660388056059
-              },
-              {
-                "symbol": "SGC",
-                "shares": 177.22640913093522,
-                "initial_price": 11.28499984741211,
-                "final_price": 11.010000228881836,
-                "initial_value": 2000,
-                "final_value": 1951.2628050955027,
-                "gain_loss": -48.7371949044973,
-                "gain_loss_percentage": -2.436859745224865,
-                "contribution_percentage": -39.08447458911926
-              }
-            ],
-            "detailed_performances": [
-              {
-                "symbol": "ACHC",
-                "shares": 69.90562591167397,
-                "initial_price": 28.610000610351562,
-                "final_price": 29.25,
-                "initial_value": 2000.0000000000002,
-                "final_value": 2044.7395579164636,
-                "gain_loss": 44.739557916463355,
-                "gain_loss_percentage": 2.2369778958231676,
-                "contribution_percentage": 35.87859576122393,
-                "daily_performance": [
-                  {
-                    "date": "2025-03-13",
-                    "price": 28.8700008392334,
-                    "value": 2018.1754787371633,
-                    "gain_loss": 18.175478737163075,
-                    "gain_loss_percentage": 0.9087739368581536
-                  },
-                  {
-                    "date": "2025-03-14",
-                    "price": 28.329999923706055,
-                    "value": 1980.4263767443474,
-                    "gain_loss": -19.57362325565282,
-                    "gain_loss_percentage": -0.9786811627826408
-                  },
-                  {
-                    "date": "2025-03-17",
-                    "price": 28.549999237060547,
-                    "value": 1995.8055664445317,
-                    "gain_loss": -4.1944335554685495,
-                    "gain_loss_percentage": -0.20972167777342743
-                  },
-                  {
-                    "date": "2025-03-18",
-                    "price": 29.25,
-                    "value": 2044.7395579164636,
-                    "gain_loss": 44.739557916463355,
-                    "gain_loss_percentage": 2.2369778958231676
-                  }
-                ]
-              },
-              {
-                "symbol": "COO",
-                "shares": 25.645957355221515,
-                "initial_price": 77.98500061035156,
-                "final_price": 79.81999969482422,
-                "initial_value": 2000,
-                "final_value": 2047.0603082672562,
-                "gain_loss": 47.06030826725623,
-                "gain_loss_percentage": 2.3530154133628116,
-                "contribution_percentage": 37.73970632146432,
-                "daily_performance": [
-                  {
-                    "date": "2025-03-13",
-                    "price": 78.91999816894531,
-                    "value": 2023.9789075149315,
-                    "gain_loss": 23.978907514931507,
-                    "gain_loss_percentage": 1.1989453757465753
-                  },
-                  {
-                    "date": "2025-03-14",
-                    "price": 78.08000183105469,
-                    "value": 2002.4363972548463,
-                    "gain_loss": 2.43639725484627,
-                    "gain_loss_percentage": 0.12181986274231349
-                  },
-                  {
-                    "date": "2025-03-17",
-                    "price": 81.26000213623047,
-                    "value": 2083.990549470976,
-                    "gain_loss": 83.99054947097602,
-                    "gain_loss_percentage": 4.199527473548801
-                  },
-                  {
-                    "date": "2025-03-18",
-                    "price": 79.81999969482422,
-                    "value": 2047.0603082672562,
-                    "gain_loss": 47.06030826725623,
-                    "gain_loss_percentage": 2.3530154133628116
-                  }
-                ]
-              },
-              {
-                "symbol": "ELTK",
-                "shares": 241.4001251460152,
-                "initial_price": 8.28499984741211,
-                "final_price": 8.619999885559082,
-                "initial_value": 2000,
-                "final_value": 2080.869051132599,
-                "gain_loss": 80.869051132599,
-                "gain_loss_percentage": 4.0434525566299495,
-                "contribution_percentage": 64.85240646762358,
-                "daily_performance": [
-                  {
-                    "date": "2025-03-13",
-                    "price": 8.390000343322754,
-                    "value": 2025.3471328532232,
-                    "gain_loss": 25.34713285322323,
-                    "gain_loss_percentage": 1.2673566426611615
-                  },
-                  {
-                    "date": "2025-03-14",
-                    "price": 8.520000457763672,
-                    "value": 2056.729176748257,
-                    "gain_loss": 56.72917674825703,
-                    "gain_loss_percentage": 2.8364588374128514
-                  },
-                  {
-                    "date": "2025-03-17",
-                    "price": 8.380000114440918,
-                    "value": 2022.9330763496594,
-                    "gain_loss": 22.93307634965936,
-                    "gain_loss_percentage": 1.1466538174829681
-                  },
-                  {
-                    "date": "2025-03-18",
-                    "price": 8.619999885559082,
-                    "value": 2080.869051132599,
-                    "gain_loss": 80.869051132599,
-                    "gain_loss_percentage": 4.0434525566299495
-                  }
-                ]
-              },
-              {
-                "symbol": "IMXI",
-                "shares": 153.0807494252315,
-                "initial_price": 13.065000057220459,
-                "final_price": 13.069999694824219,
-                "initial_value": 2000.0000000000002,
-                "final_value": 2000.7653482712383,
-                "gain_loss": 0.7653482712380537,
-                "gain_loss_percentage": 0.03826741356190268,
-                "contribution_percentage": 0.6137660388056059,
-                "daily_performance": [
-                  {
-                    "date": "2025-03-13",
-                    "price": 13,
-                    "value": 1990.0497425280093,
-                    "gain_loss": -9.95025747199088,
-                    "gain_loss_percentage": -0.49751287359954394
-                  },
-                  {
-                    "date": "2025-03-14",
-                    "price": 12.970000267028809,
-                    "value": 1985.4573609222225,
-                    "gain_loss": -14.542639077777721,
-                    "gain_loss_percentage": -0.727131953888886
-                  },
-                  {
-                    "date": "2025-03-17",
-                    "price": 13.220000267028809,
-                    "value": 2023.7275482785303,
-                    "gain_loss": 23.727548278530094,
-                    "gain_loss_percentage": 1.1863774139265046
-                  },
-                  {
-                    "date": "2025-03-18",
-                    "price": 13.069999694824219,
-                    "value": 2000.7653482712383,
-                    "gain_loss": 0.7653482712380537,
-                    "gain_loss_percentage": 0.03826741356190268
-                  }
-                ]
-              },
-              {
-                "symbol": "SGC",
-                "shares": 177.22640913093522,
-                "initial_price": 11.28499984741211,
-                "final_price": 11.010000228881836,
-                "initial_value": 2000,
-                "final_value": 1951.2628050955027,
-                "gain_loss": -48.7371949044973,
-                "gain_loss_percentage": -2.436859745224865,
-                "contribution_percentage": -39.08447458911926,
-                "daily_performance": [
-                  {
-                    "date": "2025-03-13",
-                    "price": 11.430000305175781,
-                    "value": 2025.6979104517975,
-                    "gain_loss": 25.697910451797497,
-                    "gain_loss_percentage": 1.2848955225898748
-                  },
-                  {
-                    "date": "2025-03-14",
-                    "price": 11.210000038146973,
-                    "value": 1986.708053118435,
-                    "gain_loss": -13.291946881565082,
-                    "gain_loss_percentage": -0.6645973440782541
-                  },
-                  {
-                    "date": "2025-03-17",
-                    "price": 11.640000343322754,
-                    "value": 2062.915463129945,
-                    "gain_loss": 62.91546312994478,
-                    "gain_loss_percentage": 3.1457731564972393
-                  },
-                  {
-                    "date": "2025-03-18",
-                    "price": 11.010000228881836,
-                    "value": 1951.2628050955027,
-                    "gain_loss": -48.7371949044973,
-                    "gain_loss_percentage": -2.436859745224865
-                  }
-                ]
-              }
-            ]
+#### 2. Retrieve Filtered Stocks
+`POST /api/retrieve_filtered_stocks`
+
+Retrieves filtered stocks from Redis cache.
+
+**Request:**
+```json
+{
+  "job_id": "optional_job_id",
+  "timeFrame": ["daily", "weekly", "monthly"],
+  "stockNameOnly": false,
+  "recentDay": 1
+}
+```
+
+**Response Example:**
+<details>
+<summary>Click to expand response structure</summary>
+
+```json
+{
+  "success": true,
+  "message": "Successfully retrieved 88 filtered stocks",
+  "data": {
+    "filtered_stocks": {
+      "PUBM": {
+        "metaData": {
+          "stock": "PUBM",
+          "filterTime": "2025-03-12T14:32:49.035766"
+        },
+        "FinancialMetrics": {
+          "gross_margin": 0.45,
+          "roe": 0.22,
+          "rd_ratio": 0.15,
+          "thresholds": {
+            "gross_margin": 0.3,
+            "roe": 0.15,
+            "rd_ratio": 0.1
+          }
+        },
+        "daily": {
+          "BIAS": {
+            "bias": -15.794040576424631
+          },
+          "RSI": {
+            "value": 18.564055122174523,
+            "period": 14
+          },
+          "MACD": {
+            "value": -1.5234014344971847,
+            "signal": -1.090363937702842,
+            "histogram": -0.43303749679434267,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
+          }
+        },
+        "weekly": {
+          "BIAS": {
+            "bias": -27.599479497090577
+          },
+          "RSI": {
+            "value": 28.62853198352002,
+            "period": 14
+          },
+          "MACD": {
+            "value": -1.3868694305196243,
+            "signal": -0.8667288557902623,
+            "histogram": -0.520140574729362,
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9
           }
         }
-    ```
+      }
+    }
+  }
+}
+```
+</details>
 
-### Example API Request
+#### 3. Fetch Stock History
+`POST /api/fetch_stock_history`
+
+Fetches historical stock data for specified symbols.
+
+**Request:**
+```json
+{
+  "symbols": ["AAPL", "MSFT"] or ["all"],
+  "timeRange": {
+    "start": "2023-01-01",
+    "end": "2023-12-31"
+  }
+}
+```
+
+#### 4. Calculate Portfolio Performance
+`POST /api/performance_retreat`
+
+Calculates performance metrics for a portfolio of stocks.
+
+**Request:**
+```json
+{
+  "stocks": [
+    {"symbol": "ACHC", "percentage": 20},
+    {"symbol": "COO", "percentage": 20},
+    {"symbol": "ELTK", "percentage": 20},
+    {"symbol": "IMXI", "percentage": 20},
+    {"symbol": "SGC", "percentage": 20}
+  ],
+  "total_money": 10000,
+  "start_date": "2025-03-13",
+  "end_date": "2025-03-19"
+}
+```
+
+**Response includes:**
+- Initial and final portfolio values
+- Total gain/loss and percentage
+- Individual stock performances
+- Daily performance tracking for each stock
+- Contribution percentage of each stock to total returns
+
+### Example API Requests
 
 ```bash
+# Trigger filtering for all stocks
 curl -X POST "http://localhost:8000/api/trigger_fetch_filtering" \
   -H "Content-Type: application/json" \
-  -d '{"symbols": ["all"], "timeFrame": ["daily", "weekly", "monthly"], "financialFilters": {"gross_margin_threshold": 0.3, "roe_threshold": 0.15, "rd_ratio_threshold": 0.1}}'
+  -d '{"symbols": ["all"], "timeFrame": ["daily", "weekly", "monthly"]}'
 
 # Calculate portfolio performance
 curl -X POST "http://localhost:8000/api/performance_retreat" \
@@ -539,342 +386,99 @@ curl -X POST "http://localhost:8000/api/performance_retreat" \
 ```
 stock-screener/
 ├── config/
-│   └── config.yaml         # Configuration file
+│   ├── config.yaml              # Main configuration
+│   ├── enhanced_data_config.yaml # Enhanced data source config
+│   └── free_data_config.yaml    # Free data sources config
 ├── src/
-│   ├── api/                # API endpoints
-│   ├── data/               # Data acquisition and storage
-│   ├── filters/            # Stock filtering logic
-│   ├── indicators/         # Technical indicators
-│   └── utils/              # Utility functions
-├── init_db.sql             # SQL initialization script
-├── setup_db.sh             # Database setup script
-├── run.py                  # Application entry point
-└── README.md               # This file
+│   ├── api/                     # API endpoints
+│   │   └── routes.py
+│   ├── data/                    # Data acquisition and storage
+│   │   ├── acquisition.py
+│   │   ├── database.py
+│   │   ├── models.py
+│   │   └── free_data_sources.py
+│   ├── filters/                 # Stock filtering logic
+│   │   ├── stock_filter.py
+│   │   └── trend_strategy.py
+│   ├── indicators/              # Technical indicators
+│   │   └── technical.py
+│   └── utils/                   # Utility functions
+│       ├── async_job.py
+│       ├── hash_utils.py
+│       └── logging_config.py
+├── migrations/                  # Database migrations
+│   ├── add_financial_metrics.sql
+│   └── run_migration.sh
+├── examples/                    # Usage examples
+├── init_db.sql                  # Database initialization
+├── setup_db.sh                  # Automated setup script
+├── run.py                       # Application entry point
+├── requirements.txt             # Python dependencies
+└── README.md                    # This file
 ```
+
+## Database Schema
+
+### stocks table
+- Basic information: symbol, name, exchange, sector, industry
+- Financial metrics: market_cap, pe_ratio, pb_ratio, dividend_yield
+- **New columns**: gross_margin, roe, rd_ratio
+
+### stock_prices table
+- Historical price data: open, high, low, close, adjusted_close, volume
+- Supports multiple timeframes: daily, weekly, monthly
+
+### filtered_stocks table
+- Stores filtering results with technical indicators
+- Includes BIAS, RSI, MACD values
+- **New columns**: gross_margin, roe, rd_ratio
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+1. **Database Connection Error**
+   - Ensure PostgreSQL is running: `sudo service postgresql status`
+   - Check credentials in `config/config.yaml`
+   - Verify database exists: `psql -U stock_user -d stock_screener -c "\l"`
+
+2. **Missing Database Columns Error**
+   - Run the migration: `cd migrations && ./run_migration.sh`
+   - This adds the financial metrics columns (gross_margin, roe, rd_ratio)
+
+3. **Redis Connection Error**
+   - Ensure Redis is running: `sudo service redis-server status`
+   - Check Redis configuration in `config/config.yaml`
+
+4. **API Rate Limit Issues**
+   - The application automatically handles rate limits with exponential backoff
+   - Uses multiple free data sources with automatic fallback
+
+5. **Insufficient Historical Data**
+   - The system requires minimum data points for reliable indicators
+   - Automatically extends data collection periods when needed
+
+## Free Data Sources
+
+The application uses multiple free data sources to avoid API rate limits:
+
+1. **yfinance** - Primary source for historical price data
+2. **pandas-datareader** - Fallback for various data sources
+3. **akshare** - Specialized for Chinese stocks
+
+All sources are completely free and require no API keys.
+
+## Practice History
+
+Example of filtered stocks from May 28, 2025:
+
+| Symbol | Gross Margin | ROE | Weekly BIAS | Weekly RSI |
+|--------|--------------|-----|-------------|------------|
+| AEHR   | 47.47%      | 20.94% | -13.01    | 37.60      |
+| PDD    | 60.92%      | 44.92% | -12.89    | 41.19      |
+| TGTX   | 88.30%      | 12.22% | -18.83    | 35.89      |
+| MNSO   | 44.94%      | 26.97% | -24.09    | 37.03      |
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-
-# Practice History
-
-28-May-2025
-Symbols       Price 
-"AEHR",  |         
-"FAASW", |
-"MKDWW", |
-"MTEN",  |
-"PDD",   |
-"TGTX",  |
-"HKD",   |
-"MNSO",  |
-"TAL"    |
-
-```
-{
-  "success": true,
-  "message": "Successfully retrieved 9 filtered stocks",
-  "data": {
-    "filtered_stocks": {
-      "AEHR": {
-        "metaData": {
-          "stock": "AEHR",
-          "filterTime": "2025-05-28T11:39:24.221785"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.47466,
-          "roe": 0.20943001,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -13.013971326631191
-          },
-          "RSI": {
-            "value": 37.603244145155,
-            "period": 14
-          },
-          "MACD": {
-            "value": -4.120975414521199,
-            "signal": -4.183518223642994,
-            "histogram": 0.062542809121795,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "FAASW": {
-        "metaData": {
-          "stock": "FAASW",
-          "filterTime": "2025-05-28T12:08:41.671771"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.96132004,
-          "roe": null,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -17.031230575951568
-          },
-          "RSI": {
-            "value": 44.82316136362099,
-            "period": 14
-          },
-          "MACD": {
-            "value": -0.002800177096418624,
-            "signal": -0.0029750810052140363,
-            "histogram": 0.0001749039087954123,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "MKDWW": {
-        "metaData": {
-          "stock": "MKDWW",
-          "filterTime": "2025-05-28T12:33:42.406077"
-        },
-        "FinancialMetrics": {
-          "gross_margin": null,
-          "roe": null,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -14.65835477051051
-          },
-          "RSI": {
-            "value": 50.51993553853027,
-            "period": 14
-          },
-          "MACD": {
-            "value": 0.008908118515123457,
-            "signal": 0.007996957570393847,
-            "histogram": 0.0009111609447296099,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "MTEN": {
-        "metaData": {
-          "stock": "MTEN",
-          "filterTime": "2025-05-28T12:35:33.736098"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.37345,
-          "roe": 0.085480005,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -20.134650758451947
-          },
-          "RSI": {
-            "value": 43.287629214066044,
-            "period": 14
-          },
-          "MACD": {
-            "value": -0.16617638221936115,
-            "signal": -0.22723633886542172,
-            "histogram": 0.061059956646060565,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "PDD": {
-        "metaData": {
-          "stock": "PDD",
-          "filterTime": "2025-05-28T12:45:22.905744"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.60923,
-          "roe": 0.44924,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -12.89230831536116
-          },
-          "RSI": {
-            "value": 41.19465946262712,
-            "period": 14
-          },
-          "MACD": {
-            "value": -4.014405137827396,
-            "signal": -4.940100985248686,
-            "histogram": 0.9256958474212906,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "TGTX": {
-        "metaData": {
-          "stock": "TGTX",
-          "filterTime": "2025-05-28T13:04:27.222899"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.88302004,
-          "roe": 0.122150004,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -18.827456659659305
-          },
-          "RSI": {
-            "value": 35.89373956093965,
-            "period": 14
-          },
-          "MACD": {
-            "value": -1.5661932280555968,
-            "signal": -1.6792458636530407,
-            "histogram": 0.11305263559744394,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "HKD": {
-        "metaData": {
-          "stock": "HKD",
-          "filterTime": "2025-05-28T13:23:49.278033"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 87.68,
-          "roe": 28.68,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -90.51218682566969
-          },
-          "RSI": {
-            "value": 45.46783204020632,
-            "period": 14
-          },
-          "MACD": {
-            "value": 53.75394282406036,
-            "signal": 52.04643466794741,
-            "histogram": 1.7075081561129508,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "MNSO": {
-        "metaData": {
-          "stock": "MNSO",
-          "filterTime": "2025-05-28T13:26:41.152023"
-        },
-        "FinancialMetrics": {
-          "gross_margin": 0.44939998,
-          "roe": 0.26965,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -24.094639088893484
-          },
-          "RSI": {
-            "value": 37.03299708509926,
-            "period": 14
-          },
-          "MACD": {
-            "value": -0.9630539882495253,
-            "signal": -1.266919234261917,
-            "histogram": 0.30386524601239184,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      },
-      "TAL": {
-        "metaData": {
-          "stock": "TAL",
-          "filterTime": "2025-05-28T13:32:21.020974"
-        },
-        "FinancialMetrics": {
-          "gross_margin": null,
-          "roe": null,
-          "rd_ratio": null,
-          "thresholds": {
-            "gross_margin": 0.3,
-            "roe": 0.05,
-            "rd_ratio": 0.1
-          }
-        },
-        "weekly": {
-          "BIAS": {
-            "bias": -16.2599047920218
-          },
-          "RSI": {
-            "value": 39.993888459788025,
-            "period": 14
-          },
-          "MACD": {
-            "value": -0.3825975613146353,
-            "signal": -0.40306996424409436,
-            "histogram": 0.020472402929459066,
-            "fast_period": 12,
-            "slow_period": 26,
-            "signal_period": 9
-          }
-        }
-      }
-    }
-  }
-}
-```
