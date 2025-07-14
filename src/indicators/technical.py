@@ -117,25 +117,39 @@ class TechnicalIndicators:
     def calculate_all_indicators(cls, data, time_frame='daily'):
         """
         Calculate all technical indicators for the given data based on the specified timeframe
-        using pandas-ta
+        using pandas-ta with timeframe-specific configurations and column naming
         
         Args:
             data: DataFrame with price data (must have OHLC columns)
             time_frame: Time frame for indicators (daily, weekly, monthly)
         
         Returns:
-            DataFrame with all indicators for the specified timeframe
+            DataFrame with all indicators for the specified timeframe with timeframe-prefixed columns
         """
         if data.empty:
             logger.warning("Empty data provided, cannot calculate indicators")
             return pd.DataFrame()
         
-        if len(data) < 30:  # Need at least 30 data points for reliable indicators
-            logger.warning(f"Not enough data points for reliable indicators ({len(data)} < 30)")
+        # Timeframe-specific data validation
+        min_data_points = {
+            'daily': 30,    # Need at least 30 days for reliable indicators
+            'weekly': 20,   # Need at least 20 weeks for reliable indicators
+            'monthly': 12   # Need at least 12 months for reliable indicators
+        }
+        
+        required_points = min_data_points.get(time_frame, 30)
+        if len(data) < required_points:
+            logger.warning(f"Not enough data points for reliable {time_frame} indicators ({len(data)} < {required_points})")
+            return pd.DataFrame()
+        
+        # Validate timeframe parameter
+        valid_timeframes = ['daily', 'weekly', 'monthly']
+        if time_frame not in valid_timeframes:
+            logger.error(f"Invalid timeframe '{time_frame}'. Must be one of: {valid_timeframes}")
             return pd.DataFrame()
         
         # Log the timeframe being used for calculations
-        logger.debug(f"Calculating indicators for {time_frame} timeframe with {len(data)} data points")
+        logger.info(f"Calculating {time_frame.upper()} indicators with {len(data)} data points using timeframe-specific parameters")
         
         # Get configuration for the specified time frame
         ema_config = config['indicators']['ema'][time_frame]
@@ -144,30 +158,36 @@ class TechnicalIndicators:
         ma_config = config['indicators']['ma'][time_frame]
         bollinger_config = config['indicators']['bollinger'][time_frame]
         dmi_config = config['indicators']['dmi'][time_frame]
+        atr_config = config['indicators']['atr'][time_frame]
+        stochastic_config = config['indicators']['stochastic'][time_frame]
+        williams_r_config = config['indicators']['williams_r'][time_frame]
         
         # Create a copy of the data to avoid modifying the original
         df = data.copy()
         
-        # Calculate EMA for each period in the config
+        # Add timeframe prefix for better differentiation
+        tf_prefix = time_frame.upper()
+        
+        # Calculate EMA for each period in the config with timeframe prefix
         for period in ema_config['periods']:
             # Calculate EMA using pandas-ta
-            ema_col = f'EMA_{period}_Close'
+            ema_col = f'{tf_prefix}_EMA_{period}_Close'
             df[ema_col] = df.ta.ema(close='Close', length=period)
             
             # Calculate BIAS (Price - EMA) / EMA * 100
-            bias_col = f'BIAS_{period}_Close'
+            bias_col = f'{tf_prefix}_BIAS_{period}_Close'
             df[bias_col] = (df['Close'] - df[ema_col]) / df[ema_col] * 100
         
-        # Calculate Simple Moving Averages (MA)
+        # Calculate Simple Moving Averages (MA) with timeframe prefix
         for period in ma_config['periods']:
-            ma_col = f'MA_{period}'
+            ma_col = f'{tf_prefix}_MA_{period}'
             df[ma_col] = df.ta.sma(close='Close', length=period)
         
-        # Calculate RSI
+        # Calculate RSI with timeframe prefix
         rsi_period = rsi_config['period']
-        df[f'RSI_{rsi_period}'] = df.ta.rsi(close='Close', length=rsi_period)
+        df[f'{tf_prefix}_RSI_{rsi_period}'] = df.ta.rsi(close='Close', length=rsi_period)
         
-        # Calculate MACD
+        # Calculate MACD with timeframe-specific parameters and prefix
         macd = df.ta.macd(
             close='Close',
             fast=macd_config['fast_period'],
@@ -176,51 +196,74 @@ class TechnicalIndicators:
         )
         
         # MACD returns a DataFrame with columns: MACD_fast_slow_signal, MACDh_fast_slow_signal, MACDs_fast_slow_signal
-        # Rename to match our expected column names
-        df['MACD'] = macd[f'MACD_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
-        df['MACD_Signal'] = macd[f'MACDs_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
-        df['MACD_Histogram'] = macd[f'MACDh_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
+        # Rename to match our expected column names with timeframe prefix
+        if macd is not None and not macd.empty:
+            df[f'{tf_prefix}_MACD'] = macd[f'MACD_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
+            df[f'{tf_prefix}_MACD_Signal'] = macd[f'MACDs_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
+            df[f'{tf_prefix}_MACD_Histogram'] = macd[f'MACDh_{macd_config["fast_period"]}_{macd_config["slow_period"]}_{macd_config["signal_period"]}']
         
-        # Calculate Bollinger Bands
+        # Calculate Bollinger Bands with timeframe prefix
         bb_period = bollinger_config['period']
         bb_std = bollinger_config['std_dev']
         bb = df.ta.bbands(close='Close', length=bb_period, std=bb_std)
         if bb is not None and not bb.empty:
-            df['BB_Lower'] = bb[f'BBL_{bb_period}_{bb_std}.0']
-            df['BB_Middle'] = bb[f'BBM_{bb_period}_{bb_std}.0']
-            df['BB_Upper'] = bb[f'BBU_{bb_period}_{bb_std}.0']
-            df['BB_Width'] = df['BB_Upper'] - df['BB_Lower']
-            df['BB_Position'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
+            df[f'{tf_prefix}_BB_Lower'] = bb[f'BBL_{bb_period}_{bb_std}.0']
+            df[f'{tf_prefix}_BB_Middle'] = bb[f'BBM_{bb_period}_{bb_std}.0']
+            df[f'{tf_prefix}_BB_Upper'] = bb[f'BBU_{bb_period}_{bb_std}.0']
+            df[f'{tf_prefix}_BB_Width'] = df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower']
+            df[f'{tf_prefix}_BB_Position'] = (df['Close'] - df[f'{tf_prefix}_BB_Lower']) / (df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower'])
         
-        # Calculate OBV (On-Balance Volume)
-        df['OBV'] = df.ta.obv(close='Close', volume='Volume')
+        # Calculate OBV (On-Balance Volume) with timeframe prefix
+        df[f'{tf_prefix}_OBV'] = df.ta.obv(close='Close', volume='Volume')
         
-        # Calculate DMI (Directional Movement Index)
+        # Calculate DMI (Directional Movement Index) with timeframe prefix
         dmi_period = dmi_config['period']
         dmi = df.ta.dm(high='High', low='Low', close='Close', length=dmi_period)
         if dmi is not None and not dmi.empty:
-            df['DMP'] = dmi[f'DMP_{dmi_period}']  # Positive Directional Movement
-            df['DMN'] = dmi[f'DMN_{dmi_period}']  # Negative Directional Movement
+            df[f'{tf_prefix}_DMP'] = dmi[f'DMP_{dmi_period}']  # Positive Directional Movement
+            df[f'{tf_prefix}_DMN'] = dmi[f'DMN_{dmi_period}']  # Negative Directional Movement
         
-        # Calculate ADX (Average Directional Index)
+        # Calculate ADX (Average Directional Index) with timeframe prefix
         adx = df.ta.adx(high='High', low='Low', close='Close', length=dmi_period)
         if adx is not None and not adx.empty:
-            df['ADX'] = adx[f'ADX_{dmi_period}']
-            df['DI_Plus'] = adx[f'DMP_{dmi_period}']
-            df['DI_Minus'] = adx[f'DMN_{dmi_period}']
+            df[f'{tf_prefix}_ADX'] = adx[f'ADX_{dmi_period}']
+            df[f'{tf_prefix}_DI_Plus'] = adx[f'DMP_{dmi_period}']
+            df[f'{tf_prefix}_DI_Minus'] = adx[f'DMN_{dmi_period}']
         
-        # Calculate additional indicators for comprehensive analysis
-        df['ATR'] = df.ta.atr(high='High', low='Low', close='Close', length=14)
-        df['Stochastic_K'] = df.ta.stoch(high='High', low='Low', close='Close')['STOCHk_14_3_3']
-        df['Stochastic_D'] = df.ta.stoch(high='High', low='Low', close='Close')['STOCHd_14_3_3']
-        df['Williams_R'] = df.ta.willr(high='High', low='Low', close='Close', length=14)
+        # Calculate additional indicators for comprehensive analysis with timeframe-specific periods and prefixes
+        # Use timeframe-specific configurations for each indicator
         
-        # Log the calculated indicators
+        # ATR with timeframe-specific period and prefix
+        atr_period = atr_config['period']
+        df[f'{tf_prefix}_ATR'] = df.ta.atr(high='High', low='Low', close='Close', length=atr_period)
+        
+        # Stochastic with timeframe-specific periods and prefix
+        stoch_k = stochastic_config['k_period']
+        stoch_d = stochastic_config['d_period']
+        stoch_smooth = stochastic_config['smooth_k']
+        stoch_result = df.ta.stoch(high='High', low='Low', close='Close', k=stoch_k, d=stoch_d, smooth_k=stoch_smooth)
+        if stoch_result is not None and not stoch_result.empty:
+            df[f'{tf_prefix}_Stochastic_K'] = stoch_result[f'STOCHk_{stoch_k}_{stoch_d}_{stoch_smooth}']
+            df[f'{tf_prefix}_Stochastic_D'] = stoch_result[f'STOCHd_{stoch_k}_{stoch_d}_{stoch_smooth}']
+        
+        # Williams %R with timeframe-specific period and prefix
+        williams_period = williams_r_config['period']
+        df[f'{tf_prefix}_Williams_R'] = df.ta.willr(high='High', low='Low', close='Close', length=williams_period)
+        
+        # Log the calculated indicators with timeframe differentiation
+        indicator_columns = [col for col in df.columns if col.startswith(tf_prefix)]
+        
         if cls.calucated_amount > 100:
-            logger.debug(f"{cls.calucated_amount} stocks are calculated indicators for {time_frame} timeframe: {', '.join(df.columns[df.columns.str.contains('EMA|BIAS|RSI|MACD|MA_|BB_|OBV|DM|ADX')])}")
+            logger.info(f"Calculated {len(indicator_columns)} {time_frame.upper()} indicators for {cls.calucated_amount} stocks")
+            logger.debug(f"{time_frame.upper()} indicators: {', '.join(indicator_columns[:10])}{'...' if len(indicator_columns) > 10 else ''}")
             cls.calucated_amount = 1
         else:
             cls.calucated_amount += 1
+        
+        # Add summary of timeframe-specific parameters used
+        logger.debug(f"{time_frame.upper()} timeframe parameters - EMA: {ema_config['periods']}, "
+                    f"MACD: ({macd_config['fast_period']},{macd_config['slow_period']},{macd_config['signal_period']}), "
+                    f"MA: {ma_config['periods']}")
         
         return df
     @classmethod

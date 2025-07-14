@@ -16,7 +16,7 @@ database:
 # API Configuration
 api:
   host: 0.0.0.0
-  port: 8001
+  port: 8000
   debug: true
 
 # Data Fetching Configuration
@@ -102,6 +102,39 @@ indicators:
   
   # DMI (Directional Movement Index) configuration
   dmi:
+    daily:
+      period: 14
+    weekly:
+      period: 14
+    monthly:
+      period: 14
+  
+  # ATR (Average True Range) configuration
+  atr:
+    daily:
+      period: 14
+    weekly:
+      period: 14
+    monthly:
+      period: 14
+  
+  # Stochastic Oscillator configuration
+  stochastic:
+    daily:
+      k_period: 14
+      d_period: 3
+      smooth_k: 3
+    weekly:
+      k_period: 14
+      d_period: 3
+      smooth_k: 3
+    monthly:
+      k_period: 14
+      d_period: 3
+      smooth_k: 3
+  
+  # Williams %R configuration
+  williams_r:
     daily:
       period: 14
     weekly:
