@@ -185,7 +185,18 @@ class TechnicalIndicators:
         
         # Calculate RSI with timeframe prefix
         rsi_period = rsi_config['period']
-        df[f'{tf_prefix}_RSI_{rsi_period}'] = df.ta.rsi(close='Close', length=rsi_period)
+        rsi_result = df.ta.rsi(close='Close', length=rsi_period)
+        
+        # Handle case where RSI returns DataFrame instead of Series
+        if isinstance(rsi_result, pd.DataFrame):
+            # Take the first column if it's a DataFrame
+            rsi_col = rsi_result.columns[0] if len(rsi_result.columns) > 0 else None
+            if rsi_col:
+                df[f'{tf_prefix}_RSI_{rsi_period}'] = rsi_result[rsi_col]
+            else:
+                df[f'{tf_prefix}_RSI_{rsi_period}'] = pd.Series([np.nan] * len(df), index=df.index)
+        else:
+            df[f'{tf_prefix}_RSI_{rsi_period}'] = rsi_result
         
         # Calculate MACD with timeframe-specific parameters and prefix
         macd = df.ta.macd(
@@ -207,11 +218,44 @@ class TechnicalIndicators:
         bb_std = bollinger_config['std_dev']
         bb = df.ta.bbands(close='Close', length=bb_period, std=bb_std)
         if bb is not None and not bb.empty:
-            df[f'{tf_prefix}_BB_Lower'] = bb[f'BBL_{bb_period}_{bb_std}.0']
-            df[f'{tf_prefix}_BB_Middle'] = bb[f'BBM_{bb_period}_{bb_std}.0']
-            df[f'{tf_prefix}_BB_Upper'] = bb[f'BBU_{bb_period}_{bb_std}.0']
-            df[f'{tf_prefix}_BB_Width'] = df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower']
-            df[f'{tf_prefix}_BB_Position'] = (df['Close'] - df[f'{tf_prefix}_BB_Lower']) / (df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower'])
+            # Handle both integer and decimal standard deviations in column naming
+            bb_std_str = f"{bb_std:.1f}" if bb_std != int(bb_std) else str(int(bb_std))
+            
+            # Try different column naming patterns
+            possible_columns = [
+                f'BBL_{bb_period}_{bb_std_str}.0',
+                f'BBL_{bb_period}_{bb_std}',
+                f'BBL_{bb_period}_{int(bb_std)}.0' if bb_std == int(bb_std) else f'BBL_{bb_period}_{bb_std:.1f}',
+            ]
+            
+            bb_lower_col = None
+            bb_middle_col = None
+            bb_upper_col = None
+            
+            # Find the correct column names
+            for col_pattern in possible_columns:
+                if col_pattern in bb.columns:
+                    bb_lower_col = col_pattern
+                    bb_middle_col = col_pattern.replace('BBL_', 'BBM_')
+                    bb_upper_col = col_pattern.replace('BBL_', 'BBU_')
+                    break
+            
+            # If standard patterns don't work, search for any BB columns
+            if bb_lower_col is None:
+                bb_cols = [col for col in bb.columns if 'BBL_' in col]
+                if bb_cols:
+                    bb_lower_col = bb_cols[0]
+                    bb_middle_col = bb_lower_col.replace('BBL_', 'BBM_')
+                    bb_upper_col = bb_lower_col.replace('BBL_', 'BBU_')
+            
+            if bb_lower_col and bb_lower_col in bb.columns:
+                df[f'{tf_prefix}_BB_Lower'] = bb[bb_lower_col]
+                df[f'{tf_prefix}_BB_Middle'] = bb[bb_middle_col]
+                df[f'{tf_prefix}_BB_Upper'] = bb[bb_upper_col]
+                df[f'{tf_prefix}_BB_Width'] = df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower']
+                df[f'{tf_prefix}_BB_Position'] = (df['Close'] - df[f'{tf_prefix}_BB_Lower']) / (df[f'{tf_prefix}_BB_Upper'] - df[f'{tf_prefix}_BB_Lower'])
+            else:
+                logger.warning(f"Could not find Bollinger Bands columns for {tf_prefix}. Available columns: {bb.columns.tolist()}")
         
         # Calculate OBV (On-Balance Volume) with timeframe prefix
         df[f'{tf_prefix}_OBV'] = df.ta.obv(close='Close', volume='Volume')

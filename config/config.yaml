@@ -33,29 +33,29 @@ data_fetching:
 indicators:
   ema:
     daily:
-      periods: [13]  # EMA periods for daily timeframe
+      periods: [13, 21]  # EMA periods for daily timeframe
     weekly:
-      periods: [13]  # EMA periods for weekly timeframe
+      periods: [13, 21]  # EMA periods for weekly timeframe - OPTIMIZED
     monthly:
-      periods: [4]  # EMA periods for monthly timeframe
+      periods: [4, 8]    # EMA periods for monthly timeframe - OPTIMIZED
   
-  # Moving Averages for trend analysis
+  # Moving Averages for trend analysis - OPTIMIZED
   ma:
     daily:
-      periods: [10, 20]  # MA periods for daily timeframe
+      periods: [10, 20, 50]  # MA periods for daily timeframe
     weekly:
-      periods: [10, 20]  # MA periods for weekly timeframe
+      periods: [8, 13, 20]   # MA periods for weekly timeframe - OPTIMIZED
     monthly:
-      periods: [3, 20]   # MA periods for monthly timeframe
+      periods: [3, 6, 12]    # MA periods for monthly timeframe - OPTIMIZED
   
   bias:
     # BIAS calculation: (Close - EMA) / EMA * 100
     daily:
       threshold: -8  # Filter stocks with BIAS below this threshold
     weekly:
-      threshold: -12
+      threshold: -5
     monthly:
-      threshold: -7
+      threshold: -3
   
   rsi:
     daily:
@@ -64,15 +64,17 @@ indicators:
       overbought: 70  # RSI above this is considered overbought
     weekly:
       period: 14
-      oversold: 30
-      overbought: 70
+      oversold: 35      # OPTIMIZED: Earlier signal detection
+      overbought: 65    # OPTIMIZED: Earlier signal detection
     monthly:
       period: 14
-      oversold: 30
-      overbought: 70
-      # Monthly RSI specific thresholds
-      uptrend_min: 50   # RSI moving from 50 towards 60
-      uptrend_target: 60
+      oversold: 35      # OPTIMIZED: More permissive for monthly
+      overbought: 65    # OPTIMIZED: More permissive for monthly
+      # Monthly RSI specific thresholds - OPTIMIZED
+      uptrend_min: 40   # OPTIMIZED: Relaxed from 50 to 40
+      uptrend_target: 70 # OPTIMIZED: Extended from 60 to 70
+      momentum_min: 45  # NEW: For momentum building detection
+      momentum_max: 65  # NEW: For momentum building detection
   
   macd:
     daily:
@@ -80,43 +82,43 @@ indicators:
       slow_period: 26
       signal_period: 9
     weekly:
-      fast_period: 12
-      slow_period: 26
-      signal_period: 9
+      fast_period: 8      # OPTIMIZED: Faster response for weekly
+      slow_period: 21     # OPTIMIZED: Faster response for weekly
+      signal_period: 7    # OPTIMIZED: Faster signal for weekly
     monthly:
-      fast_period: 6
-      slow_period: 13
-      signal_period: 5
+      fast_period: 5      # OPTIMIZED: Even faster for monthly
+      slow_period: 10     # OPTIMIZED: Faster for monthly
+      signal_period: 4    # OPTIMIZED: Faster signal for monthly
   
-  # Bollinger Bands configuration
+  # Bollinger Bands configuration - OPTIMIZED
   bollinger:
     daily:
       period: 20
-      std_dev: 2
+      std_dev: 2.0
     weekly:
-      period: 20
-      std_dev: 2
+      period: 15         # OPTIMIZED: More sensitive than 20
+      std_dev: 1.8       # OPTIMIZED: Tighter bands for earlier signals
     monthly:
-      period: 20
-      std_dev: 2
+      period: 10         # OPTIMIZED: More responsive than 20 for monthly
+      std_dev: 1.5       # OPTIMIZED: Tighter bands for monthly trends
   
   # DMI (Directional Movement Index) configuration
   dmi:
     daily:
-      period: 14
+      period: 13
     weekly:
-      period: 14
+      period: 8
     monthly:
-      period: 14
+      period: 5
   
   # ATR (Average True Range) configuration
   atr:
     daily:
-      period: 14
+      period: 13
     weekly:
-      period: 14
+      period: 8
     monthly:
-      period: 14
+      period: 5
   
   # Stochastic Oscillator configuration
   stochastic:

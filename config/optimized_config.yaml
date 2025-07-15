@@ -1,0 +1,239 @@
+# Optimized Configuration for Better Stock Discovery
+# This configuration reduces the strictness of weekly filtering while maintaining quality
+
+# Database Configuration
+database:
+  postgres:
+    host: localhost
+    port: 5432
+    username: stock_user
+    password: 7788
+    database: stock_screener
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    db: 0
+    expiration_days: 30
+
+# API Configuration
+api:
+  host: 0.0.0.0
+  port: 8000
+  debug: true
+
+# Data Fetching Configuration
+data_fetching:
+  yfinance:
+    batch_size: 100
+    retry_attempts: 3
+    retry_delay: 5
+  scrapy:
+    concurrent_requests: 16
+    download_delay: 0.5
+
+# Technical Indicators Configuration - OPTIMIZED FOR BETTER DISCOVERY
+indicators:
+  ema:
+    daily:
+      periods: [13, 21]  # Added EMA21 for additional trend confirmation
+    weekly:
+      periods: [13, 21]  # Added EMA21 for weekly analysis
+    monthly:
+      periods: [4, 8]    # Added EMA8 for monthly analysis
+  
+  # Moving Averages for trend analysis - OPTIMIZED
+  ma:
+    daily:
+      periods: [10, 20, 50]  # Added MA50 for longer trend
+    weekly:
+      periods: [8, 13, 20]   # Optimized: 8,13,20 instead of 10,20 for better sensitivity
+    monthly:
+      periods: [3, 6, 12]    # Optimized: Added MA6 and MA12 for better monthly analysis
+  
+  bias:
+    # BIAS calculation: (Close - EMA) / EMA * 100 - RELAXED THRESHOLDS
+    daily:
+      threshold: -10     # Relaxed from -8 to -10 (more permissive)
+    weekly:
+      threshold: -15     # Relaxed from -12 to -15 (more permissive)
+    monthly:
+      threshold: -10     # Relaxed from -7 to -10 (more permissive)
+  
+  rsi:
+    daily:
+      period: 14
+      oversold: 35       # Relaxed from 30 to 35 (catch earlier signals)
+      overbought: 65     # Relaxed from 70 to 65 (catch earlier signals)
+    weekly:
+      period: 14
+      oversold: 35       # Relaxed thresholds for weekly
+      overbought: 65
+    monthly:
+      period: 14
+      oversold: 40       # More relaxed for monthly
+      overbought: 60
+      uptrend_min: 45    # Relaxed from 50 to 45
+      uptrend_target: 65 # Relaxed from 60 to 65
+  
+  macd:
+    daily:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    weekly:
+      fast_period: 8     # Optimized: Faster response for weekly (was 12)
+      slow_period: 21    # Optimized: Faster response for weekly (was 26)
+      signal_period: 7   # Optimized: Faster signal for weekly (was 9)
+    monthly:
+      fast_period: 5     # Optimized: Even faster for monthly (was 6)
+      slow_period: 10    # Optimized: Faster for monthly (was 13)
+      signal_period: 4   # Optimized: Faster signal for monthly (was 5)
+  
+  # Bollinger Bands configuration - OPTIMIZED
+  bollinger:
+    daily:
+      period: 20
+      std_dev: 2.0
+    weekly:
+      period: 15         # Optimized: Shorter period for better sensitivity (was 20)
+      std_dev: 1.8       # Optimized: Tighter bands for earlier signals (was 2.0)
+    monthly:
+      period: 12         # Optimized: Shorter period for monthly (was 20)
+      std_dev: 1.5       # Optimized: Tighter bands for monthly (was 2.0)
+  
+  # DMI (Directional Movement Index) configuration - OPTIMIZED
+  dmi:
+    daily:
+      period: 14
+    weekly:
+      period: 10         # Optimized: Shorter period for better sensitivity (was 14)
+    monthly:
+      period: 8          # Optimized: Shorter period for monthly (was 14)
+  
+  # ATR (Average True Range) configuration - OPTIMIZED
+  atr:
+    daily:
+      period: 14
+    weekly:
+      period: 10         # Optimized: Shorter period for weekly (was 8)
+    monthly:
+      period: 6          # Optimized: Shorter period for monthly (was 5)
+  
+  # Stochastic Oscillator configuration
+  stochastic:
+    daily:
+      k_period: 14
+      d_period: 3
+      smooth_k: 3
+    weekly:
+      k_period: 10       # Optimized: Shorter period for weekly sensitivity
+      d_period: 3
+      smooth_k: 3
+    monthly:
+      k_period: 8        # Optimized: Shorter period for monthly sensitivity
+      d_period: 3
+      smooth_k: 3
+  
+  # Williams %R configuration
+  williams_r:
+    daily:
+      period: 14
+    weekly:
+      period: 10         # Optimized: Shorter period for weekly
+    monthly:
+      period: 8          # Optimized: Shorter period for monthly
+
+# OPTIMIZED Weekly and Monthly Filtering Criteria - LESS STRICT
+filtering_criteria:
+  weekly:
+    # Strategy: Use OR logic between combinations, AND within combinations but with fewer requirements
+    
+    # Combination 1: Basic Trend + Volume (SIMPLIFIED)
+    combination_1:
+      ma_bullish_alignment: true     # MA8 > MA13 OR MA13 > MA20 (more flexible)
+      volume_condition: true         # Volume increase YoY OR volume breakout (OR logic)
+      
+    # Combination 2: MACD Momentum (SIMPLIFIED)  
+    combination_2:
+      macd_bullish: true            # MACD golden cross OR near golden cross (OR logic)
+      price_above_ma: true          # Price above MA8 or MA13 (more flexible)
+      
+    # Combination 3: Bollinger + Momentum (SIMPLIFIED)
+    combination_3:
+      bollinger_expansion: true     # Bollinger breakout OR squeeze expansion (OR logic)
+      momentum_positive: true       # RSI > 45 OR DMI positive (more flexible)
+      
+    # NEW Combination 4: Early Stage Discovery
+    combination_4:
+      early_uptrend: true          # EMA13 > EMA21 AND price near EMA13
+      volume_support: true         # Volume above average
+      rsi_healthy: true            # RSI between 35-65 (not overbought/oversold)
+  
+  monthly:
+    # Monthly conditions are generally good, but let's make them slightly more flexible
+    
+    # Condition 1: Monthly trend confirmation (RELAXED)
+    condition_1:
+      trend_confirmation: true      # 3 green candles OR above MA6 OR above MA12 (more options)
+      
+    # Condition 2: Bollinger pattern (KEPT)
+    condition_2:
+      bollinger_squeeze_expansion: true
+      
+    # Condition 3: RSI momentum (RELAXED)
+    condition_3:
+      rsi_momentum_45_to_65: true   # Relaxed from 50-60 to 45-65
+      
+    # NEW Condition 4: Volume and price action
+    condition_4:
+      price_strength: true         # Price above MA3 AND volume increasing
+      momentum_building: true      # MACD improving AND RSI > 40
+
+# RELAXED Financial Metrics Thresholds
+financial_metrics:
+  gross_margin_threshold: 0.25     # Relaxed from 30% to 25%
+  roe_threshold: 0.03              # Relaxed from 5% to 3%
+  rd_ratio_threshold: 0.05         # Relaxed from 7% to 5%
+  enable_financial_filtering: false # Disabled for broader discovery
+
+# Volume Analysis Thresholds - NEW SECTION
+volume_analysis:
+  weekly:
+    volume_increase_threshold: 1.2  # 20% increase (was likely higher)
+    volume_breakout_multiplier: 1.5 # 1.5x average volume (was likely 2.0x)
+    lookback_periods: 20            # Look back 20 weeks for comparison
+  monthly:
+    volume_increase_threshold: 1.15 # 15% increase for monthly
+    volume_breakout_multiplier: 1.3 # 1.3x average volume for monthly
+    lookback_periods: 12            # Look back 12 months
+
+# RSI Thresholds - NEW SECTION
+rsi_thresholds:
+  weekly:
+    momentum_min: 45               # Relaxed from 50
+    momentum_max: 65               # Relaxed from 60
+    oversold_exit: 35              # Exit oversold earlier
+    overbought_entry: 65           # Enter before overbought
+  monthly:
+    momentum_min: 40               # Even more relaxed for monthly
+    momentum_max: 70
+    oversold_exit: 35
+    overbought_entry: 65
+
+# MACD Sensitivity - NEW SECTION
+macd_sensitivity:
+  weekly:
+    golden_cross_lookback: 5       # Look back 5 periods for golden cross
+    near_cross_threshold: 0.15     # 15% threshold for "near" golden cross
+  monthly:
+    golden_cross_lookback: 3       # Look back 3 periods for monthly
+    near_cross_threshold: 0.20     # 20% threshold for monthly
+
+# Stock Exchanges
+exchanges:
+  - SP500
+  - NASDAQ
+  - NYSE
+  - AMEX
+  - ACN

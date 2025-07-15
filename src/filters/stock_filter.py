@@ -350,7 +350,7 @@ class StockFilter:
                     'Volume': 'sum'
                 }).dropna()
             elif time_frame.lower() in ['monthly', 'month']:
-                data = data.resample('M').agg({
+                data = data.resample('ME').agg({
                     'Open': 'first',
                     'High': 'max',
                     'Low': 'min',
