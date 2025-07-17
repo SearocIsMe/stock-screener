@@ -360,13 +360,14 @@ class TechnicalIndicators:
         return df, is_uptrend, duration
     
     @staticmethod
-    def check_macd_golden_cross(data, lookback_periods=3):
+    def check_macd_golden_cross(data, lookback_periods=3, timeframe_prefix=None):
         """
         Check if MACD just formed a golden cross (MACD line crosses above signal line)
         
         Args:
             data: DataFrame with MACD and MACD_Signal columns
             lookback_periods: Number of periods to look back for recent golden cross
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if golden cross occurred recently
@@ -374,17 +375,32 @@ class TechnicalIndicators:
         if data.empty or len(data) < lookback_periods + 1:
             return False
         
-        if 'MACD' not in data.columns or 'MACD_Signal' not in data.columns:
+        # Determine column names based on timeframe prefix
+        if timeframe_prefix:
+            macd_col = f'{timeframe_prefix}MACD'
+            signal_col = f'{timeframe_prefix}MACD_Signal'
+        else:
+            # Try to find MACD columns with any timeframe prefix
+            macd_cols = [col for col in data.columns if col.endswith('_MACD') or col == 'MACD']
+            signal_cols = [col for col in data.columns if col.endswith('_MACD_Signal') or col == 'MACD_Signal']
+            
+            if not macd_cols or not signal_cols:
+                return False
+            
+            macd_col = macd_cols[0]
+            signal_col = signal_cols[0]
+        
+        if macd_col not in data.columns or signal_col not in data.columns:
             return False
         
         # Check recent periods for golden cross
         recent_data = data.tail(lookback_periods + 1)
         
         for i in range(1, len(recent_data)):
-            prev_macd = recent_data['MACD'].iloc[i-1]
-            prev_signal = recent_data['MACD_Signal'].iloc[i-1]
-            curr_macd = recent_data['MACD'].iloc[i]
-            curr_signal = recent_data['MACD_Signal'].iloc[i]
+            prev_macd = recent_data[macd_col].iloc[i-1]
+            prev_signal = recent_data[signal_col].iloc[i-1]
+            curr_macd = recent_data[macd_col].iloc[i]
+            curr_signal = recent_data[signal_col].iloc[i]
             
             # Check if MACD crossed above signal line
             if (prev_macd <= prev_signal and curr_macd > curr_signal and
@@ -395,23 +411,42 @@ class TechnicalIndicators:
         return False
     
     @staticmethod
-    def check_macd_near_golden_cross(data, threshold=0.1):
+    def check_macd_near_golden_cross(data, threshold=0.1, timeframe_prefix=None):
         """
         Check if MACD is approaching golden cross (MACD line close to signal line from below)
         
         Args:
             data: DataFrame with MACD and MACD_Signal columns
             threshold: Threshold for "close" (as percentage of signal line)
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if MACD is approaching golden cross
         """
-        if data.empty or 'MACD' not in data.columns or 'MACD_Signal' not in data.columns:
+        if data.empty:
+            return False
+        
+        # Determine column names based on timeframe prefix
+        if timeframe_prefix:
+            macd_col = f'{timeframe_prefix}MACD'
+            signal_col = f'{timeframe_prefix}MACD_Signal'
+        else:
+            # Try to find MACD columns with any timeframe prefix
+            macd_cols = [col for col in data.columns if col.endswith('_MACD') or col == 'MACD']
+            signal_cols = [col for col in data.columns if col.endswith('_MACD_Signal') or col == 'MACD_Signal']
+            
+            if not macd_cols or not signal_cols:
+                return False
+            
+            macd_col = macd_cols[0]
+            signal_col = signal_cols[0]
+        
+        if macd_col not in data.columns or signal_col not in data.columns:
             return False
         
         latest = data.iloc[-1]
-        macd = latest['MACD']
-        signal = latest['MACD_Signal']
+        macd = latest[macd_col]
+        signal = latest[signal_col]
         
         if pd.isna(macd) or pd.isna(signal) or signal == 0:
             return False
@@ -450,7 +485,7 @@ class TechnicalIndicators:
         return True
     
     @staticmethod
-    def check_bollinger_squeeze_expansion(data, squeeze_threshold=0.1, expansion_threshold=0.2):
+    def check_bollinger_squeeze_expansion(data, squeeze_threshold=0.1, expansion_threshold=0.2, timeframe_prefix=None):
         """
         Check if Bollinger Bands had a squeeze and then expanded upward
         
@@ -458,6 +493,7 @@ class TechnicalIndicators:
             data: DataFrame with Bollinger Bands columns
             squeeze_threshold: Threshold for identifying squeeze (BB_Width relative to price)
             expansion_threshold: Threshold for identifying expansion
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if squeeze followed by upward expansion occurred
@@ -465,7 +501,25 @@ class TechnicalIndicators:
         if data.empty or len(data) < 10:
             return False
         
-        required_cols = ['BB_Width', 'Close', 'BB_Upper', 'BB_Middle']
+        # Determine column names based on timeframe prefix
+        if timeframe_prefix:
+            bb_width_col = f'{timeframe_prefix}BB_Width'
+            bb_upper_col = f'{timeframe_prefix}BB_Upper'
+            bb_middle_col = f'{timeframe_prefix}BB_Middle'
+        else:
+            # Try to find BB columns with any timeframe prefix
+            bb_width_cols = [col for col in data.columns if col.endswith('_BB_Width') or col == 'BB_Width']
+            bb_upper_cols = [col for col in data.columns if col.endswith('_BB_Upper') or col == 'BB_Upper']
+            bb_middle_cols = [col for col in data.columns if col.endswith('_BB_Middle') or col == 'BB_Middle']
+            
+            if not bb_width_cols or not bb_upper_cols or not bb_middle_cols:
+                return False
+            
+            bb_width_col = bb_width_cols[0]
+            bb_upper_col = bb_upper_cols[0]
+            bb_middle_col = bb_middle_cols[0]
+        
+        required_cols = [bb_width_col, 'Close', bb_upper_col, bb_middle_col]
         if not all(col in data.columns for col in required_cols):
             return False
         
@@ -473,7 +527,7 @@ class TechnicalIndicators:
         
         # Find squeeze periods (low BB_Width relative to price)
         recent_data = recent_data.copy()
-        recent_data['BB_Width_Pct'] = recent_data['BB_Width'] / recent_data['Close']
+        recent_data['BB_Width_Pct'] = recent_data[bb_width_col] / recent_data['Close']
         
         # Look for squeeze followed by expansion
         squeeze_found = False
@@ -485,19 +539,20 @@ class TechnicalIndicators:
                 # Check for subsequent expansion with upward breakout
                 for j in range(i + 1, min(i + 4, len(recent_data))):
                     if (recent_data['BB_Width_Pct'].iloc[j] > expansion_threshold and
-                        recent_data['Close'].iloc[j] > recent_data['BB_Middle'].iloc[j]):
+                        recent_data['Close'].iloc[j] > recent_data[bb_middle_col].iloc[j]):
                         return True
         
         return False
     
     @staticmethod
-    def check_rsi_momentum_50_to_60(data, rsi_period=14):
+    def check_rsi_momentum_50_to_60(data, rsi_period=14, timeframe_prefix=None):
         """
         Check if RSI is moving from 50 towards 60 (upward momentum)
         
         Args:
             data: DataFrame with RSI column
             rsi_period: RSI period to check
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if RSI shows upward momentum from 50 towards 60
@@ -505,7 +560,16 @@ class TechnicalIndicators:
         if data.empty or len(data) < 3:
             return False
         
-        rsi_col = f'RSI_{rsi_period}'
+        # Determine column name based on timeframe prefix
+        if timeframe_prefix:
+            rsi_col = f'{timeframe_prefix}RSI_{rsi_period}'
+        else:
+            # Try to find RSI column with any timeframe prefix
+            rsi_cols = [col for col in data.columns if col.endswith(f'_RSI_{rsi_period}') or col == f'RSI_{rsi_period}']
+            if not rsi_cols:
+                return False
+            rsi_col = rsi_cols[0]
+        
         if rsi_col not in data.columns:
             return False
         
@@ -616,13 +680,14 @@ class TechnicalIndicators:
             return False
     
     @staticmethod
-    def check_dmi_positive_turn(data, dmi_period=14):
+    def check_dmi_positive_turn(data, dmi_period=14, timeframe_prefix=None):
         """
         Check if DMI shows positive turn (DI+ crossing above DI-)
         
         Args:
             data: DataFrame with DMI columns
             dmi_period: DMI period
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if positive DMI turn occurred recently
@@ -630,8 +695,20 @@ class TechnicalIndicators:
         if data.empty or len(data) < 3:
             return False
         
-        di_plus_col = 'DI_Plus'
-        di_minus_col = 'DI_Minus'
+        # Determine column names based on timeframe prefix
+        if timeframe_prefix:
+            di_plus_col = f'{timeframe_prefix}DI_Plus'
+            di_minus_col = f'{timeframe_prefix}DI_Minus'
+        else:
+            # Try to find DMI columns with any timeframe prefix
+            di_plus_cols = [col for col in data.columns if col.endswith('_DI_Plus') or col == 'DI_Plus']
+            di_minus_cols = [col for col in data.columns if col.endswith('_DI_Minus') or col == 'DI_Minus']
+            
+            if not di_plus_cols or not di_minus_cols:
+                return False
+            
+            di_plus_col = di_plus_cols[0]
+            di_minus_col = di_minus_cols[0]
         
         if di_plus_col not in data.columns or di_minus_col not in data.columns:
             return False
@@ -653,13 +730,14 @@ class TechnicalIndicators:
         return False
     
     @staticmethod
-    def check_bollinger_breakout(data, breakout_type='middle'):
+    def check_bollinger_breakout(data, breakout_type='middle', timeframe_prefix=None):
         """
         Check if price broke out above Bollinger Band middle or upper band
         
         Args:
             data: DataFrame with Bollinger Bands columns
             breakout_type: 'middle' or 'upper' band breakout
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if breakout occurred
@@ -667,9 +745,26 @@ class TechnicalIndicators:
         if data.empty or len(data) < 2:
             return False
         
-        required_cols = ['Close', 'BB_Middle']
+        # Determine column names based on timeframe prefix
+        if timeframe_prefix:
+            bb_middle_col = f'{timeframe_prefix}BB_Middle'
+            bb_upper_col = f'{timeframe_prefix}BB_Upper'
+        else:
+            # Try to find BB columns with any timeframe prefix
+            bb_middle_cols = [col for col in data.columns if col.endswith('_BB_Middle') or col == 'BB_Middle']
+            bb_upper_cols = [col for col in data.columns if col.endswith('_BB_Upper') or col == 'BB_Upper']
+            
+            if not bb_middle_cols:
+                return False
+            
+            bb_middle_col = bb_middle_cols[0]
+            bb_upper_col = bb_upper_cols[0] if bb_upper_cols else None
+        
+        required_cols = ['Close', bb_middle_col]
         if breakout_type == 'upper':
-            required_cols.append('BB_Upper')
+            if bb_upper_col is None:
+                return False
+            required_cols.append(bb_upper_col)
         
         if not all(col in data.columns for col in required_cols):
             return False
@@ -678,20 +773,21 @@ class TechnicalIndicators:
         previous = data.iloc[-2]
         
         if breakout_type == 'middle':
-            return (previous['Close'] <= previous['BB_Middle'] and
-                    latest['Close'] > latest['BB_Middle'])
+            return (previous['Close'] <= previous[bb_middle_col] and
+                    latest['Close'] > latest[bb_middle_col])
         else:  # upper
-            return (previous['Close'] <= previous['BB_Upper'] and
-                    latest['Close'] > latest['BB_Upper'])
+            return (previous['Close'] <= previous[bb_upper_col] and
+                    latest['Close'] > latest[bb_upper_col])
     
     @staticmethod
-    def check_obv_uptrend(data, periods=5):
+    def check_obv_uptrend(data, periods=5, timeframe_prefix=None):
         """
         Check if OBV is in uptrend
         
         Args:
             data: DataFrame with OBV column
             periods: Number of periods to check for uptrend
+            timeframe_prefix: Optional timeframe prefix (e.g., 'WEEKLY_', 'MONTHLY_')
             
         Returns:
             bool: True if OBV is trending upward
@@ -699,10 +795,20 @@ class TechnicalIndicators:
         if data.empty or len(data) < periods:
             return False
         
-        if 'OBV' not in data.columns:
+        # Determine column name based on timeframe prefix
+        if timeframe_prefix:
+            obv_col = f'{timeframe_prefix}OBV'
+        else:
+            # Try to find OBV column with any timeframe prefix
+            obv_cols = [col for col in data.columns if col.endswith('_OBV') or col == 'OBV']
+            if not obv_cols:
+                return False
+            obv_col = obv_cols[0]
+        
+        if obv_col not in data.columns:
             return False
         
-        recent_obv = data['OBV'].tail(periods).dropna()
+        recent_obv = data[obv_col].tail(periods).dropna()
         if len(recent_obv) < periods:
             return False
         

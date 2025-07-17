@@ -551,10 +551,13 @@ class StockFilter:
                 rsi_config = config['indicators']['rsi'][time_frame]
                 macd_config = config['indicators']['macd'][time_frame]
                 
-                # Extract technical indicator values from the latest row
-                rsi_col = f'RSI_{rsi_config["period"]}'
-                macd_signal_col = 'MACD_Signal'
-                macd_col = 'MACD'
+                # Add timeframe prefix for column names
+                tf_prefix = time_frame.upper()
+                
+                # Extract technical indicator values from the latest row with timeframe prefix
+                rsi_col = f'{tf_prefix}_RSI_{rsi_config["period"]}'
+                macd_signal_col = f'{tf_prefix}_MACD_Signal'
+                macd_col = f'{tf_prefix}_MACD'
                 
                 # Get RSI value
                 rsi = latest.get(rsi_col, None)
@@ -588,7 +591,7 @@ class StockFilter:
                 ema_config = config['indicators']['ema'][time_frame]
                 if ema_config['periods']:
                     ema_period = ema_config['periods'][0]  # Use first EMA period
-                    ema_col = f'EMA_{ema_period}_Close'
+                    ema_col = f'{tf_prefix}_EMA_{ema_period}_Close'
                     if ema_col in latest.index and 'Close' in latest.index:
                         if not pd.isna(latest[ema_col]) and not pd.isna(latest['Close']) and latest[ema_col] > 0:
                             price_sma_ratio = latest['Close'] / latest[ema_col]
@@ -647,8 +650,9 @@ class StockFilter:
                 # More stringent criteria for longer time frames
                 # Try to get ADX if available (would need to be calculated separately)
                 adx = None
-                if 'ADX' in latest.index:
-                    adx = latest.get('ADX', None)
+                adx_col = f'{tf_prefix}_ADX'
+                if adx_col in latest.index:
+                    adx = latest.get(adx_col, None)
                     if adx is not None and not pd.isna(adx) and adx < 25:
                         logger.debug(f"{symbol}: ADX {adx} indicates weak trend for {time_frame}")
                         return False
@@ -728,8 +732,8 @@ class StockFilter:
             latest = indicators.iloc[-1]
             
             # Check MA10 > MA20 (bullish alignment)
-            ma10 = latest.get('MA_10', None)
-            ma20 = latest.get('MA_20', None)
+            ma10 = latest.get('WEEKLY_MA_10', None)
+            ma20 = latest.get('WEEKLY_MA_20', None)
             
             if ma10 is None or ma20 is None or pd.isna(ma10) or pd.isna(ma20):
                 logger.debug(f"{symbol}: MA10 or MA20 not available")
@@ -740,7 +744,7 @@ class StockFilter:
                 return False
             
             # Check MACD golden cross
-            if not TechnicalIndicators.check_macd_golden_cross(indicators):
+            if not TechnicalIndicators.check_macd_golden_cross(indicators, timeframe_prefix='WEEKLY_'):
                 logger.debug(f"{symbol}: No recent MACD golden cross")
                 return False
             
@@ -766,8 +770,8 @@ class StockFilter:
             latest = indicators.iloc[-1]
             
             # Check MA10 > MA20 (bullish alignment)
-            ma10 = latest.get('MA_10', None)
-            ma20 = latest.get('MA_20', None)
+            ma10 = latest.get('WEEKLY_MA_10', None)
+            ma20 = latest.get('WEEKLY_MA_20', None)
             
             if ma10 is None or ma20 is None or pd.isna(ma10) or pd.isna(ma20):
                 logger.debug(f"{symbol}: MA10 or MA20 not available")
@@ -783,12 +787,12 @@ class StockFilter:
                 return False
             
             # Check MACD near golden cross
-            if not TechnicalIndicators.check_macd_near_golden_cross(indicators):
+            if not TechnicalIndicators.check_macd_near_golden_cross(indicators, timeframe_prefix='WEEKLY_'):
                 logger.debug(f"{symbol}: MACD not near golden cross")
                 return False
             
             # Check DMI positive turn
-            if not TechnicalIndicators.check_dmi_positive_turn(indicators):
+            if not TechnicalIndicators.check_dmi_positive_turn(indicators, timeframe_prefix='WEEKLY_'):
                 logger.debug(f"{symbol}: No DMI positive turn")
                 return False
             
@@ -807,15 +811,15 @@ class StockFilter:
                 return False
             
             # Check Bollinger breakout (middle or upper band)
-            bollinger_middle_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'middle')
-            bollinger_upper_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'upper')
+            bollinger_middle_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'middle', timeframe_prefix='WEEKLY_')
+            bollinger_upper_breakout = TechnicalIndicators.check_bollinger_breakout(indicators, 'upper', timeframe_prefix='WEEKLY_')
             
             if not (bollinger_middle_breakout or bollinger_upper_breakout):
                 logger.debug(f"{symbol}: No Bollinger band breakout")
                 return False
             
             # Check OBV uptrend
-            if not TechnicalIndicators.check_obv_uptrend(indicators):
+            if not TechnicalIndicators.check_obv_uptrend(indicators, timeframe_prefix='WEEKLY_'):
                 logger.debug(f"{symbol}: OBV not in uptrend")
                 return False
             
@@ -877,7 +881,7 @@ class StockFilter:
             # Check if above 20MA
             latest = indicators.iloc[-1]
             close_price = latest.get('Close', None)
-            ma20 = latest.get('MA_20', None)
+            ma20 = latest.get('MONTHLY_MA_20', None)
             
             if close_price is not None and ma20 is not None and not pd.isna(close_price) and not pd.isna(ma20):
                 if close_price > ma20:
@@ -902,7 +906,7 @@ class StockFilter:
                 logger.debug(f"{symbol}: No indicators data available for monthly condition 2")
                 return False
             
-            return TechnicalIndicators.check_bollinger_squeeze_expansion(indicators)
+            return TechnicalIndicators.check_bollinger_squeeze_expansion(indicators, timeframe_prefix='MONTHLY_')
             
         except Exception as e:
             logger.error(f"Error in monthly condition 2 for {symbol}: {e}")
@@ -916,7 +920,7 @@ class StockFilter:
                 logger.debug(f"{symbol}: No indicators data available for monthly condition 3")
                 return False
             
-            return TechnicalIndicators.check_rsi_momentum_50_to_60(indicators)
+            return TechnicalIndicators.check_rsi_momentum_50_to_60(indicators, timeframe_prefix='MONTHLY_')
             
         except Exception as e:
             logger.error(f"Error in monthly condition 3 for {symbol}: {e}")
@@ -956,33 +960,39 @@ class StockFilter:
                 'date': latest.name.isoformat() if hasattr(latest.name, 'isoformat') else str(latest.name)
             }
             
+            # Add timeframe prefix for column names
+            tf_prefix = time_frame.upper()
+            
             # RSI
-            rsi_col = f'RSI_{rsi_config["period"]}'
+            rsi_col = f'{tf_prefix}_RSI_{rsi_config["period"]}'
             if rsi_col in latest.index:
                 rsi_val = latest[rsi_col]
                 if rsi_val is not None and not pd.isna(rsi_val):
                     result['rsi'] = float(rsi_val)
             
             # MACD
-            if 'MACD' in latest.index:
-                macd_val = latest['MACD']
+            macd_col = f'{tf_prefix}_MACD'
+            if macd_col in latest.index:
+                macd_val = latest[macd_col]
                 if macd_val is not None and not pd.isna(macd_val):
                     result['macd'] = float(macd_val)
                     
-            if 'MACD_Signal' in latest.index:
-                macd_signal_val = latest['MACD_Signal']
+            macd_signal_col = f'{tf_prefix}_MACD_Signal'
+            if macd_signal_col in latest.index:
+                macd_signal_val = latest[macd_signal_col]
                 if macd_signal_val is not None and not pd.isna(macd_signal_val):
                     result['macd_signal'] = float(macd_signal_val)
                     
-            if 'MACD_Histogram' in latest.index:
-                macd_hist_val = latest['MACD_Histogram']
+            macd_hist_col = f'{tf_prefix}_MACD_Histogram'
+            if macd_hist_col in latest.index:
+                macd_hist_val = latest[macd_hist_col]
                 if macd_hist_val is not None and not pd.isna(macd_hist_val):
                     result['macd_histogram'] = float(macd_hist_val)
             
             # EMA and BIAS for each configured period
             for period in ema_config['periods']:
-                ema_col = f'EMA_{period}_Close'
-                bias_col = f'BIAS_{period}_Close'
+                ema_col = f'{tf_prefix}_EMA_{period}_Close'
+                bias_col = f'{tf_prefix}_BIAS_{period}_Close'
                 
                 if ema_col in latest.index:
                     ema_val = latest[ema_col]
@@ -998,7 +1008,7 @@ class StockFilter:
             if 'Close' in latest.index and ema_config['periods']:
                 close_val = latest['Close']
                 ema_period = ema_config['periods'][0]
-                ema_col = f'EMA_{ema_period}_Close'
+                ema_col = f'{tf_prefix}_EMA_{ema_period}_Close'
                 if (ema_col in latest.index and close_val is not None and
                     not pd.isna(close_val) and not pd.isna(latest[ema_col]) and
                     latest[ema_col] is not None and latest[ema_col] > 0):
